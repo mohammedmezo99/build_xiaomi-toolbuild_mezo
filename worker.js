@@ -1,89 +1,685 @@
 const TARGET_GITHUB_REPO = "mohammedmezo99/medo_lite";
 const DEFAULT_WORKFLOW_FILE = "build.yml";
 const INVALID_USAGE_MESSAGE = "Please send /mezo <ROM_LINK> with a valid ROM link.";
-const ACK_MESSAGE = "Link received.\nDeadZone Lite request accepted.\nPlease wait 40-60 minutes.";
+const ACK_MESSAGE = "Link received by MEZO.\n⚡ DeadZone Lite is now building.\n⏳ Please wait 40–60 minutes.";
 const DISPATCH_FAILURE_MESSAGE = "Build request could not be started. Please contact MEZO.";
-
-// This Worker is the only webhook target for the Telegram bot.
-// Telegram supports only one active webhook per bot token. If an older Worker still owns
-// the webhook, point the bot webhook to this Worker URL or use a separate Telegram bot.
+const HELP_MESSAGE =
+  "MEZO Lite Bot\n\n/mezo <ROM_LINK> — Start a Lite build\n/roms <codename> — Find OTA ROMs\n/roms <codename> all — Show more ROMs\n/roms <codename> <region> — Filter by region\n/latest — Latest completed build\n/status — Private status only";
+const ROM_SOURCE_URL =
+  "https://raw.githubusercontent.com/XiaomiFirmwareUpdater/miui-updates-tracker/master/data/latest.yml";
+const ROM_SOURCE_NAME = "XiaomiFirmwareUpdater/miui-updates-tracker";
+const ROM_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const PUBLIC_ROM_LIMIT = 10;
+const PUBLIC_ROM_ALL_LIMIT = 20;
+const BUILD_STATUS_ORDER = ["queued", "building", "uploading", "success", "failed"];
+const REGION_ALIASES = new Map([
+  ["china", "China"],
+  ["cn", "China"],
+  ["global", "Global"],
+  ["eea", "EEA"],
+  ["europe", "EEA"],
+  ["eu", "EEA"],
+  ["india", "India"],
+  ["in", "India"],
+  ["indonesia", "Indonesia"],
+  ["id", "Indonesia"],
+  ["russia", "Russia"],
+  ["ru", "Russia"],
+  ["turkey", "Turkey"],
+  ["tr", "Turkey"],
+  ["taiwan", "Taiwan"],
+  ["tw", "Taiwan"],
+  ["japan", "Japan"],
+  ["jp", "Japan"],
+  ["unknown", "Unknown"],
+]);
 
 export default {
   async fetch(request, env) {
-    if (request.method !== "POST") {
-      return new Response("Method Not Allowed", { status: 405 });
+    const url = new URL(request.url);
+
+    if (url.pathname === "/internal/builds/sync") {
+      return handleInternalBuildSync(request, env);
     }
 
-    const secretHeader = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
-    if (!secretHeader || secretHeader !== env.TELEGRAM_WEBHOOK_SECRET) {
-      return new Response("Forbidden", { status: 403 });
-    }
-
-    let update;
-    try {
-      update = await request.json();
-    } catch {
-      return new Response("Bad Request", { status: 400 });
-    }
-
-    const message = update?.message;
-    const hasText = typeof message?.text === "string";
-    const chatId = String(message?.chat?.id ?? "");
-    const expectedChatId = String(env.TELEGRAM_CHAT_GROUP_ID ?? "");
-    console.log("[worker] webhook update", {
-      chatId,
-      expectedTelegramChatGroupId: expectedChatId,
-      hasText,
-    });
-
-    if (!message || typeof message.text !== "string") {
-      return new Response("OK", { status: 200 });
-    }
-
-    if (!chatId || chatId !== expectedChatId) {
-      return new Response("OK", { status: 200 });
-    }
-
-    const parsed = parseMezoCommand(message.text);
-    console.log("[worker] command parse", {
-      chatId,
-      parsedMezoCommand: parsed.isCommand,
-      romLinkValid: Boolean(parsed.romLink),
-    });
-
-    if (!parsed.isCommand) {
-      return new Response("OK", { status: 200 });
-    }
-
-    if (!parsed.romLink) {
-      await sendTelegramMessage(env, chatId, INVALID_USAGE_MESSAGE, message.message_id);
-      return new Response("OK", { status: 200 });
-    }
-
-    await sendTelegramMessage(env, chatId, ACK_MESSAGE, message.message_id);
-
-    const dispatched = await dispatchWorkflow(env, parsed.romLink, buildDisplayName(message.from), message.from?.id);
-    if (!dispatched) {
-      await sendTelegramMessage(env, chatId, DISPATCH_FAILURE_MESSAGE, message.message_id);
-    }
-
-    return new Response("OK", { status: 200 });
+    return handleTelegramWebhook(request, env);
   },
 };
 
-function parseMezoCommand(text) {
-  const trimmed = text.trim();
-  const match = trimmed.match(/^\/mezo(?:@[\w_]+)?(?:\s+(.+))?$/i);
-  if (!match) {
-    return { isCommand: false, romLink: null };
+async function handleTelegramWebhook(request, env) {
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405 });
   }
 
-  const romLink = match[1]?.trim() ?? "";
+  const secretHeader = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
+  if (!secretHeader || secretHeader !== env.TELEGRAM_WEBHOOK_SECRET) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  let update;
+  try {
+    update = await request.json();
+  } catch {
+    return new Response("Bad Request", { status: 400 });
+  }
+
+  const message = update?.message;
+  if (!message || typeof message.text !== "string") {
+    return new Response("OK", { status: 200 });
+  }
+
+  const command = parseCommand(message.text);
+  if (!command) {
+    return new Response("OK", { status: 200 });
+  }
+
+  const chatId = String(message.chat?.id ?? "");
+  const chatType = String(message.chat?.type ?? "");
+  const fromId = String(message.from?.id ?? "");
+  const publicChatId = String(env.TELEGRAM_CHAT_GROUP_ID ?? "");
+  const privateOwnerId = String(env.MEZO_PRIVATE_CHAT_ID ?? "");
+  const isPublicChat = Boolean(chatId) && chatId === publicChatId;
+  const isAuthorizedPrivateChat = chatType === "private" && Boolean(fromId) && fromId === privateOwnerId;
+
+  console.log("[worker] webhook update", {
+    command: command.name,
+    chatId,
+    chatType,
+    isPublicChat,
+    isAuthorizedPrivateChat,
+  });
+
+  if (command.name === "status") {
+    if (isPublicChat) {
+      await sendTelegramMessage(env, chatId, "Status is private.", message.message_id);
+      return new Response("OK", { status: 200 });
+    }
+
+    if (!isAuthorizedPrivateChat) {
+      if (chatType === "private") {
+        await sendTelegramMessage(env, chatId, "Unauthorized.", message.message_id);
+      }
+      return new Response("OK", { status: 200 });
+    }
+
+    await sendTelegramMessage(env, chatId, await formatCurrentStatus(env), message.message_id);
+    return new Response("OK", { status: 200 });
+  }
+
+  if (!isPublicChat && !isAuthorizedPrivateChat) {
+    return new Response("OK", { status: 200 });
+  }
+
+  switch (command.name) {
+    case "help":
+      await sendTelegramMessage(env, chatId, HELP_MESSAGE, message.message_id);
+      return new Response("OK", { status: 200 });
+    case "latest":
+      await sendTelegramMessage(env, chatId, await formatLatestBuild(env), message.message_id);
+      return new Response("OK", { status: 200 });
+    case "roms":
+      await sendTelegramMessage(env, chatId, await handleRomsCommand(env, command.args), message.message_id);
+      return new Response("OK", { status: 200 });
+    case "mezo":
+      if (!isPublicChat) {
+        return new Response("OK", { status: 200 });
+      }
+      return handleMezoCommand(env, message, command.args);
+    default:
+      return new Response("OK", { status: 200 });
+  }
+}
+
+async function handleMezoCommand(env, message, args) {
+  const chatId = String(message.chat?.id ?? "");
+  const romLink = args.trim();
   if (!isValidHttpUrl(romLink)) {
-    return { isCommand: true, romLink: null };
+    await sendTelegramMessage(env, chatId, INVALID_USAGE_MESSAGE, message.message_id);
+    return new Response("OK", { status: 200 });
   }
 
-  return { isCommand: true, romLink };
+  const now = new Date().toISOString();
+  const buildId = `${Date.now()}-${message.message_id ?? "0"}`;
+  const userId = String(message.from?.id ?? "");
+  const userName = buildDisplayName(message.from);
+
+  await createBuildRecord(env, {
+    buildId,
+    userId,
+    userName,
+    romLink,
+    createdAt: now,
+  });
+
+  await sendTelegramMessage(env, chatId, ACK_MESSAGE, message.message_id);
+
+  const dispatched = await dispatchWorkflow(env, romLink, userName, message.from?.id);
+  if (!dispatched) {
+    await updateBuildAfterDispatchFailure(env, buildId);
+    await sendTelegramMessage(env, chatId, DISPATCH_FAILURE_MESSAGE, message.message_id);
+  }
+
+  return new Response("OK", { status: 200 });
+}
+
+function parseCommand(text) {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^\/([a-z_]+)(?:@[\w_]+)?(?:\s+([\s\S]+))?$/i);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    name: String(match[1] || "").toLowerCase(),
+    args: String(match[2] || "").trim(),
+  };
+}
+
+async function handleRomsCommand(env, args) {
+  const tokens = args.split(/\s+/).map((value) => value.trim()).filter(Boolean);
+  const codename = normalizeLookupCodename(tokens[0] || "");
+  if (!codename) {
+    return "Please send /roms <codename>.";
+  }
+
+  const secondToken = (tokens[1] || "").toLowerCase();
+  const showAll = secondToken === "all";
+  const regionFilter = showAll ? null : normalizeRegionToken(secondToken);
+  if (tokens[1] && !showAll && !regionFilter) {
+    return "Unknown region. Try china, global, eea, india, indonesia, russia, turkey, taiwan, or japan.";
+  }
+
+  let roms = [];
+  try {
+    roms = await getCachedRoms(env, codename, regionFilter);
+    if (roms.length === 0) {
+      roms = await refreshRomsForCodename(env, codename, regionFilter);
+    }
+  } catch (error) {
+    console.warn("[worker] rom lookup failed", {
+      codename,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    roms = await getAnyCachedRoms(env, codename, regionFilter);
+  }
+
+  if (roms.length === 0) {
+    return `❌ No OTA ROMs found for ${codename.toUpperCase()}.\nCheck the codename and try again.`;
+  }
+
+  const limit = showAll ? PUBLIC_ROM_ALL_LIMIT : PUBLIC_ROM_LIMIT;
+  const truncated = roms.length > limit;
+  const selected = roms.slice(0, limit);
+  const lines = [`${codename.toUpperCase()} OTA ROMs`, ""];
+
+  selected.forEach((rom, index) => {
+    lines.push(`${index + 1}. ${rom.region} • ${rom.romVersion} • ${rom.android}`);
+    lines.push(`   /mezo ${rom.downloadLink}`);
+    lines.push("");
+  });
+
+  if (!showAll && roms.length > PUBLIC_ROM_LIMIT) {
+    lines.push(`Use /roms ${codename} all for more.`);
+  } else if (showAll && truncated) {
+    lines.push("Showing first 20 results.");
+  }
+
+  return lines.join("\n").trim();
+}
+
+async function formatLatestBuild(env) {
+  const query = `
+    SELECT device_name, rom_version, region, android, drive_link
+    FROM builds
+    WHERE status = 'success'
+      AND drive_link IS NOT NULL
+      AND TRIM(drive_link) != ''
+    ORDER BY datetime(updated_at) DESC, id DESC
+    LIMIT 1
+  `;
+  const row = await env.medo_lite_bot.prepare(query).first();
+  if (!row) {
+    return "No completed builds found yet.";
+  }
+
+  return [
+    "✅ Latest DeadZone Lite Build",
+    "",
+    `Device: ${row.device_name || "Unknown"}`,
+    `ROM: ${row.rom_version || "Unknown"}`,
+    `Region: ${row.region || "Unknown"}`,
+    `Android: ${normalizeAndroidTag(row.android)}`,
+    "",
+    "Download:",
+    row.drive_link,
+  ].join("\n");
+}
+
+async function formatCurrentStatus(env) {
+  const placeholders = BUILD_STATUS_ORDER.map(() => "?").join(", ");
+  const query = `
+    SELECT status, device_name, rom_version, user_name, updated_at
+    FROM builds
+    WHERE status IN (${placeholders})
+    ORDER BY datetime(updated_at) DESC, id DESC
+    LIMIT 1
+  `;
+  const row = await env.medo_lite_bot.prepare(query).bind(...BUILD_STATUS_ORDER).first();
+  if (!row) {
+    return "No builds found yet.";
+  }
+
+  return [
+    "Current Status",
+    "",
+    `Status: ${row.status || "Unknown"}`,
+    `Device: ${row.device_name || "Unknown"}`,
+    `ROM: ${row.rom_version || "Unknown"}`,
+    `Requested by: ${row.user_name || "Unknown"}`,
+    `Updated: ${formatStatusTime(row.updated_at)}`,
+  ].join("\n");
+}
+
+async function handleInternalBuildSync(request, env) {
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405 });
+  }
+
+  const configuredToken = String(env.BUILD_STATUS_WEBHOOK_TOKEN || "").trim();
+  if (!configuredToken) {
+    return new Response("Not Found", { status: 404 });
+  }
+
+  const authHeader = request.headers.get("Authorization") || "";
+  if (authHeader !== `Bearer ${configuredToken}`) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return new Response("Bad Request", { status: 400 });
+  }
+
+  const romLink = String(payload?.rom_link || "").trim();
+  const userId = String(payload?.builder_id || "").trim();
+  const userName = String(payload?.builder_name || "").trim();
+  const status = normalizeBuildStatus(payload?.status);
+  const updatedAt = new Date().toISOString();
+
+  if (!romLink || !status) {
+    return new Response("Bad Request", { status: 400 });
+  }
+
+  const metadata = sanitizeBuildMetadata(payload);
+  const updated = await updateBuildFromWorkflow(env, {
+    romLink,
+    userId,
+    userName,
+    status,
+    updatedAt,
+    metadata,
+  });
+
+  return Response.json({ ok: updated }, { status: updated ? 200 : 404 });
+}
+
+async function createBuildRecord(env, build) {
+  const query = `
+    INSERT INTO builds (
+      build_id, user_id, user_name, rom_link, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'queued', ?, ?)
+  `;
+  await env.medo_lite_bot
+    .prepare(query)
+    .bind(build.buildId, build.userId, build.userName, build.romLink, build.createdAt, build.createdAt)
+    .run();
+}
+
+async function updateBuildAfterDispatchFailure(env, buildId) {
+  const now = new Date().toISOString();
+  await env.medo_lite_bot
+    .prepare("UPDATE builds SET status = 'failed', updated_at = ? WHERE build_id = ?")
+    .bind(now, buildId)
+    .run();
+}
+
+async function updateBuildFromWorkflow(env, build) {
+  const selectQuery = `
+    SELECT id
+    FROM builds
+    WHERE rom_link = ?
+      AND (? = '' OR user_id = ?)
+      AND (? = '' OR user_name = ? OR user_name = '')
+    ORDER BY datetime(created_at) DESC, id DESC
+    LIMIT 1
+  `;
+  const row = await env.medo_lite_bot
+    .prepare(selectQuery)
+    .bind(build.romLink, build.userId, build.userId, build.userName, build.userName)
+    .first();
+
+  if (!row?.id) {
+    return false;
+  }
+
+  const query = `
+    UPDATE builds
+    SET status = ?,
+        device_codename = COALESCE(NULLIF(?, ''), device_codename),
+        device_name = COALESCE(NULLIF(?, ''), device_name),
+        rom_version = COALESCE(NULLIF(?, ''), rom_version),
+        region = COALESCE(NULLIF(?, ''), region),
+        android = COALESCE(NULLIF(?, ''), android),
+        final_zip = COALESCE(NULLIF(?, ''), final_zip),
+        drive_link = COALESCE(NULLIF(?, ''), drive_link),
+        updated_at = ?
+    WHERE id = ?
+  `;
+
+  await env.medo_lite_bot
+    .prepare(query)
+    .bind(
+      build.status,
+      build.metadata.deviceCodename,
+      build.metadata.deviceName,
+      build.metadata.romVersion,
+      build.metadata.region,
+      build.metadata.android,
+      build.metadata.finalZip,
+      build.metadata.driveLink,
+      build.updatedAt,
+      row.id,
+    )
+    .run();
+
+  return true;
+}
+
+async function getCachedRoms(env, codename, regionFilter) {
+  const query = `
+    SELECT codename, device_name, region, rom_version, android, rom_type, download_link, source, updated_at
+    FROM rom_cache
+    WHERE codename = ?
+      AND datetime(updated_at) >= datetime(?)
+      AND (? IS NULL OR region = ?)
+    ORDER BY id ASC
+  `;
+  const cutoff = new Date(Date.now() - ROM_CACHE_TTL_MS).toISOString();
+  const results = await env.medo_lite_bot.prepare(query).bind(codename, cutoff, regionFilter, regionFilter).all();
+  return normalizeCachedRomRows(results?.results || []);
+}
+
+async function getAnyCachedRoms(env, codename, regionFilter) {
+  const query = `
+    SELECT codename, device_name, region, rom_version, android, rom_type, download_link, source, updated_at
+    FROM rom_cache
+    WHERE codename = ?
+      AND (? IS NULL OR region = ?)
+    ORDER BY id ASC
+  `;
+  const results = await env.medo_lite_bot.prepare(query).bind(codename, regionFilter, regionFilter).all();
+  return normalizeCachedRomRows(results?.results || []);
+}
+
+async function refreshRomsForCodename(env, codename, regionFilter) {
+  const response = await fetch(ROM_SOURCE_URL, {
+    headers: { "User-Agent": "medo-lite-telegram-worker" },
+  });
+  if (!response.ok) {
+    throw new Error(`rom_source_http_${response.status}`);
+  }
+
+  const content = await response.text();
+  const parsed = extractRomsFromYaml(content, codename);
+  if (parsed.length === 0) {
+    return [];
+  }
+
+  await replaceRomCache(env, codename, parsed);
+  return regionFilter ? parsed.filter((item) => item.region === regionFilter) : parsed;
+}
+
+async function replaceRomCache(env, codename, roms) {
+  const now = new Date().toISOString();
+  await env.medo_lite_bot.prepare("DELETE FROM rom_cache WHERE codename = ?").bind(codename).run();
+
+  const statement = env.medo_lite_bot.prepare(`
+    INSERT INTO rom_cache (
+      codename, device_name, region, rom_version, android, rom_type, download_link, source, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const batch = roms.map((rom) =>
+    statement.bind(
+      codename,
+      rom.deviceName,
+      rom.region,
+      rom.romVersion,
+      rom.android,
+      rom.romType,
+      rom.downloadLink,
+      rom.source,
+      now,
+      now,
+    ),
+  );
+
+  if (batch.length > 0) {
+    await env.medo_lite_bot.batch(batch);
+  }
+}
+
+function extractRomsFromYaml(content, lookupCodename) {
+  const blocks = content
+    .split(/\n-(?=\s)/)
+    .map((block, index) => (index === 0 ? block : `-${block}`))
+    .filter(Boolean);
+  const matched = [];
+  const seenLinks = new Set();
+
+  for (const block of blocks) {
+    const entry = parseSimpleYamlBlock(block);
+    if (!entry) {
+      continue;
+    }
+
+    const rawCodename = String(entry.codename || "").trim();
+    if (normalizeBaseCodename(rawCodename) !== lookupCodename) {
+      continue;
+    }
+
+    const method = String(entry.method || "").trim().toLowerCase();
+    const link = String(entry.link || "").trim();
+    if (!isBuildableRomLink(link, method)) {
+      continue;
+    }
+
+    if (seenLinks.has(link)) {
+      continue;
+    }
+    seenLinks.add(link);
+
+    matched.push({
+      codename: lookupCodename,
+      deviceName: String(entry.name || "").trim() || "Unknown Xiaomi Device",
+      region: inferRegion(rawCodename, String(entry.name || ""), String(entry.version || ""), link),
+      romVersion: String(entry.version || "").trim() || "Unknown",
+      android: normalizeAndroidTag(entry.android),
+      romType: "Recovery",
+      downloadLink: link,
+      source: ROM_SOURCE_NAME,
+      sortDate: String(entry.date || "").trim(),
+    });
+  }
+
+  matched.sort((left, right) => {
+    const leftTime = Date.parse(left.sortDate || "");
+    const rightTime = Date.parse(right.sortDate || "");
+    return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
+  });
+
+  return matched.map(({ sortDate, ...rom }) => rom);
+}
+
+function parseSimpleYamlBlock(block) {
+  const result = {};
+  const lines = block.split(/\r?\n/);
+  for (const line of lines) {
+    const cleaned = line.replace(/^- /, "").trim();
+    const match = cleaned.match(/^([A-Za-z0-9_]+):\s*(.*)$/);
+    if (!match) {
+      continue;
+    }
+
+    const key = match[1];
+    let value = match[2].trim();
+    if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith("\"") && value.endsWith("\""))) {
+      value = value.slice(1, -1);
+    }
+    result[key] = value === "null" ? "" : value;
+  }
+
+  return result;
+}
+
+function normalizeCachedRomRows(rows) {
+  return rows
+    .map((row) => ({
+      codename: String(row.codename || "").trim(),
+      deviceName: String(row.device_name || "").trim() || "Unknown Xiaomi Device",
+      region: String(row.region || "").trim() || "Unknown",
+      romVersion: String(row.rom_version || "").trim() || "Unknown",
+      android: normalizeAndroidTag(row.android),
+      romType: String(row.rom_type || "").trim() || "Recovery",
+      downloadLink: String(row.download_link || "").trim(),
+      source: String(row.source || "").trim() || ROM_SOURCE_NAME,
+    }))
+    .filter((row) => row.downloadLink);
+}
+
+function isBuildableRomLink(link, method) {
+  const normalizedLink = String(link || "").trim().toLowerCase();
+  if (!normalizedLink.endsWith(".zip")) {
+    return false;
+  }
+  if (normalizedLink.endsWith(".tgz")) {
+    return false;
+  }
+  if (method && method !== "recovery") {
+    return false;
+  }
+  return normalizedLink.includes("ota_full") || normalizedLink.includes("/miui_") || normalizedLink.includes("_global_") || normalizedLink.includes("_eea_") || normalizedLink.includes("_cn_") || normalizedLink.includes("_in_") || normalizedLink.includes("_id_") || normalizedLink.includes("_ru_") || normalizedLink.includes("_tr_") || normalizedLink.includes("_tw_") || normalizedLink.includes("_jp_");
+}
+
+function normalizeLookupCodename(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "");
+}
+
+function normalizeBaseCodename(value) {
+  const normalized = normalizeLookupCodename(value);
+  return normalized
+    .replace(/_(eea|in|id|ru|tr|tw|jp)_global$/, "")
+    .replace(/_(sg)_global$/, "")
+    .replace(/_global$/, "");
+}
+
+function normalizeRegionToken(value) {
+  return REGION_ALIASES.get(String(value || "").trim().toLowerCase()) || null;
+}
+
+function inferRegion(codename, name, version, link) {
+  const normalizedCodename = normalizeLookupCodename(codename);
+  const normalizedName = String(name || "").toLowerCase();
+  const normalizedVersion = String(version || "").toUpperCase();
+  const normalizedLink = String(link || "").toLowerCase();
+
+  if (normalizedCodename.endsWith("_eea_global") || normalizedName.includes(" eea") || normalizedVersion.endsWith("EUXM")) {
+    return "EEA";
+  }
+  if (normalizedCodename.endsWith("_in_global") || normalizedName.includes(" india") || normalizedVersion.endsWith("INXM")) {
+    return "India";
+  }
+  if (normalizedCodename.endsWith("_id_global") || normalizedName.includes(" indonesia") || normalizedVersion.endsWith("IDXM")) {
+    return "Indonesia";
+  }
+  if (normalizedCodename.endsWith("_ru_global") || normalizedName.includes(" russia") || normalizedVersion.endsWith("RUXM")) {
+    return "Russia";
+  }
+  if (normalizedCodename.endsWith("_tr_global") || normalizedName.includes(" turkey") || normalizedVersion.endsWith("TRXM")) {
+    return "Turkey";
+  }
+  if (normalizedCodename.endsWith("_tw_global") || normalizedName.includes(" taiwan") || normalizedVersion.endsWith("TWXM")) {
+    return "Taiwan";
+  }
+  if (normalizedCodename.endsWith("_jp_global") || normalizedName.includes(" japan") || normalizedVersion.endsWith("JPXM")) {
+    return "Japan";
+  }
+  if (normalizedCodename.endsWith("_global") || normalizedName.includes(" global") || normalizedVersion.endsWith("MIXM")) {
+    return "Global";
+  }
+  if (normalizedName.includes(" china") || normalizedVersion.endsWith("CNXM") || normalizedLink.includes("_cn_") || !normalizedCodename.includes("_global")) {
+    return "China";
+  }
+  return "Unknown";
+}
+
+function normalizeAndroidTag(value) {
+  const text = String(value || "").trim();
+  const digits = text.replace(/[^0-9]/g, "");
+  return digits ? `A${digits}` : "Unknown";
+}
+
+function formatStatusTime(value) {
+  const date = new Date(String(value || ""));
+  if (Number.isNaN(date.getTime())) {
+    return String(value || "Unknown");
+  }
+  return date.toISOString().replace("T", " ").replace(".000Z", " UTC");
+}
+
+function normalizeBuildStatus(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  switch (normalized) {
+    case "queued":
+      return "queued";
+    case "request_received":
+    case "build_started":
+    case "packaging_started":
+    case "building":
+      return "building";
+    case "upload_started":
+    case "uploading":
+      return "uploading";
+    case "success":
+      return "success";
+    case "fail":
+    case "failed":
+      return "failed";
+    default:
+      return "";
+  }
+}
+
+function sanitizeBuildMetadata(payload) {
+  return {
+    deviceCodename: String(payload?.device_codename || "").trim().slice(0, 120),
+    deviceName: String(payload?.device_name || "").trim().slice(0, 200),
+    romVersion: String(payload?.rom_version || "").trim().slice(0, 120),
+    region: String(payload?.region || "").trim().slice(0, 60),
+    android: normalizeAndroidTag(payload?.android),
+    finalZip: String(payload?.final_zip || "").trim().slice(0, 255),
+    driveLink: sanitizeUrl(payload?.drive_link),
+  };
+}
+
+function sanitizeUrl(value) {
+  const text = String(value || "").trim();
+  return isValidHttpUrl(text) ? text : "";
 }
 
 function isValidHttpUrl(value) {
@@ -197,11 +793,7 @@ async function logSafeDispatchResponseText(response, env) {
 }
 
 function containsSensitiveValue(text, env) {
-  const sensitiveValues = [
-    env.TELEGRAM_BOT_TOKEN,
-    env.GITHUB_TOKEN,
-    env.TELEGRAM_WEBHOOK_SECRET,
-  ]
+  const sensitiveValues = [env.TELEGRAM_BOT_TOKEN, env.GITHUB_TOKEN, env.TELEGRAM_WEBHOOK_SECRET, env.BUILD_STATUS_WEBHOOK_TOKEN]
     .filter(Boolean)
     .map((value) => String(value));
 

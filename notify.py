@@ -303,6 +303,40 @@ def telegram_api_url(method: str) -> str:
     return f"https://api.telegram.org/bot{bot_token}/{method}"
 
 
+def sync_worker_build_status(status: str) -> None:
+    sync_url = (os.environ.get("BUILD_STATUS_WEBHOOK_URL") or "").strip()
+    sync_token = (os.environ.get("BUILD_STATUS_WEBHOOK_TOKEN") or "").strip()
+    rom_link = (os.environ.get("INPUT_URL") or "").strip()
+    if not sync_url or not sync_token or not rom_link:
+        return
+
+    metadata = get_metadata()
+    payload = {
+        "status": status,
+        "rom_link": rom_link,
+        "builder_id": (os.environ.get("BUILDER_ID") or "").strip(),
+        "builder_name": (os.environ.get("BUILDER_NAME") or "").strip(),
+        "device_codename": metadata["codename"],
+        "device_name": metadata["device_name"],
+        "rom_version": metadata["rom_version"],
+        "region": metadata["region"],
+        "android": metadata["android"],
+        "final_zip": metadata["filename"],
+        "drive_link": metadata["drive_link"],
+    }
+
+    try:
+        response = requests.post(
+            sync_url,
+            json=payload,
+            headers={"Authorization": f"Bearer {sync_token}"},
+            timeout=TIMEOUT,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        print(f"[notify] worker sync failed: {exc}", file=sys.stderr)
+
+
 def send_telegram_message(chat_id: str, text: str, parse_mode: str | None = None) -> int:
     payload = {
         "chat_id": chat_id,
@@ -366,6 +400,7 @@ def handle_private(status: str, stage: str = "") -> None:
     if not chat_id:
         raise RuntimeError("Missing MEZO_PRIVATE_CHAT_ID")
 
+    sync_worker_build_status(status)
     text = format_private_message(status, stage)
     message_id = os.environ.get("MEZO_PRIVATE_MESSAGE_ID", "").strip()
 

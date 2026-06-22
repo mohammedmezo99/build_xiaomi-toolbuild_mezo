@@ -256,7 +256,7 @@ async function handleRomsCommand(env, args) {
   const lookup = await fetchBuildableRomsForCodename(env, codename, { regionFilter });
   const roms = lookup.roms;
   if (lookup.sourceUnavailable) {
-    return "⚠️ ROM source is temporarily unavailable.\nPlease try again later.";
+    return "\u26A0\uFE0F ROM source is temporarily unavailable.\nPlease try again later.";
   }
   if (roms.length === 0) {
     return regionFilter
@@ -271,21 +271,21 @@ async function handleRomsCommand(env, args) {
   const lines = [`\u{1F50E} OTA ROMs for ${codename.toUpperCase()}`, ""];
 
   selected.forEach((rom, index) => {
-    lines.push(`${toKeycapNumber(index + 1)}  \u{1F30D}\u00A0Region: ${rom.region}`);
-    lines.push(`\u{1F9E9}\u00A0Version: ${rom.romVersion}`);
-    lines.push(`\u{1F916}\u00A0Android: ${rom.android}`);
-    lines.push(`\u{1F517}\u00A0/mezo ${rom.downloadLink}`);
+    lines.push(`${toKeycapNumber(index + 1)} \u{1F30D} Region: ${rom.region}`);
+    lines.push(`\u{1F9E9} Version: ${rom.romVersion}`);
+    lines.push(`\u{1F916} Android: ${rom.android}`);
+    lines.push(`\u{1F517} /mezo ${rom.downloadLink}`);
     lines.push("");
   });
 
   if (!showAll && roms.length > PUBLIC_ROM_LIMIT) {
-    lines.push(`➡️ Use /roms ${codename} all for more.`);
+    lines.push(`\u27A1\uFE0F Use /roms ${codename} all for more.`);
   } else if (showAll && truncated) {
-    lines.push("ℹ️ Showing first 20 results.");
+    lines.push("\u2139\uFE0F Showing first 20 results.");
   }
 
   if (lookup.usedCachedResults) {
-    lines.push("ℹ️ Showing cached results.");
+    lines.push("\u2139\uFE0F Showing cached results.");
   }
 
   if (lines[lines.length - 1] !== "") {
@@ -305,7 +305,7 @@ async function handleRegionsCommand(env, args) {
   const lookup = await fetchBuildableRomsForCodename(env, codename);
   const roms = lookup.roms;
   if (lookup.sourceUnavailable) {
-    return "⚠️ ROM source is temporarily unavailable.\nPlease try again later.";
+    return "\u26A0\uFE0F ROM source is temporarily unavailable.\nPlease try again later.";
   }
   const regions = sortRegions(uniqueValues(roms.map((rom) => rom.region)));
   if (regions.length === 0) {
@@ -319,7 +319,7 @@ async function handleRegionsCommand(env, args) {
     "",
     "Use:",
     ` /build ${codename} ${regions[0].toLowerCase()}`,
-    ...(lookup.usedCachedResults ? ["", "ℹ️ Showing cached results."] : []),
+    ...(lookup.usedCachedResults ? ["", "\u2139\uFE0F Showing cached results."] : []),
   ].join("\n");
 }
 
@@ -332,7 +332,7 @@ async function handleDeviceCommand(env, args) {
   const lookup = await fetchBuildableRomsForCodename(env, codename);
   const roms = lookup.roms;
   if (lookup.sourceUnavailable) {
-    return "⚠️ ROM source is temporarily unavailable.\nPlease try again later.";
+    return "\u26A0\uFE0F ROM source is temporarily unavailable.\nPlease try again later.";
   }
   if (roms.length === 0) {
     return `❌ No device data found for ${codename.toUpperCase()}.\nCheck the codename and try again.`;
@@ -342,18 +342,18 @@ async function handleDeviceCommand(env, args) {
   const regions = sortRegions(uniqueValues(roms.map((rom) => rom.region)));
 
   return [
-    `${codename.toUpperCase()}`,
+    `\u{1F4F1} ${codename.toUpperCase()}`,
     "",
-    `ℹ️ Device: ${latest.deviceName || "Unknown Xiaomi Device"}`,
-    `Latest ROM: ${latest.romVersion || "Unknown"}`,
-    `Region: ${latest.region || "Unknown"}`,
-    `Android: ${latest.android || "Unknown"}`,
-    `Buildable ROMs: ${roms.length}`,
-    `Regions: ${regions.join(", ")}`,
+    `\u{1F3F7} Device: ${latest.deviceName || "Unknown Xiaomi Device"}`,
+    `\u{1F9E9} Latest ROM: ${latest.romVersion || "Unknown"}`,
+    `\u{1F30D} Region: ${latest.region || "Unknown"}`,
+    `\u{1F916} Android: ${latest.android || "Unknown"}`,
+    `\u{1F4E6} Buildable ROMs: ${roms.length}`,
+    `\u{1F310} Regions: ${regions.join(", ")}`,
     "",
     "Use:",
     ` /build ${codename} ${latest.region.toLowerCase()}`,
-    ...(lookup.usedCachedResults ? ["", "ℹ️ Showing cached results."] : []),
+    ...(lookup.usedCachedResults ? ["", "\u2139\uFE0F Showing cached results."] : []),
   ].join("\n");
 }
 
@@ -369,18 +369,18 @@ async function formatLatestBuild(env) {
   `;
   const row = await env.medo_lite_bot.prepare(query).first();
   if (!row) {
-    return "ℹ️ No completed builds found yet.";
+    return "\u2139\uFE0F No completed builds found yet.";
   }
 
   return [
-    "✅ Latest DeadZone Lite Build",
+    "\u2705 Latest DeadZone Lite Build",
     "",
-    ` Device: ${row.device_name || "Unknown"}`,
-    ` ROM: ${row.rom_version || "Unknown"}`,
-    `Region: ${row.region || "Unknown"}`,
-    `Android: ${normalizeAndroidTag(row.android)}`,
+    `\u{1F4F1} Device: ${row.device_name || "Unknown"}`,
+    `\u{1F9E9} ROM: ${row.rom_version || "Unknown"}`,
+    `\u{1F30D} Region: ${row.region || "Unknown"}`,
+    `\u{1F916} Android: ${normalizeAndroidTag(row.android)}`,
     "",
-    " Download:",
+    "\u{1F517} Download:",
     row.drive_link,
   ].join("\n");
 }
@@ -396,14 +396,14 @@ async function formatRecentBuilds(env) {
   const results = await env.medo_lite_bot.prepare(query).bind(PUBLIC_BUILDS_LIMIT).all();
   const rows = results?.results || [];
   if (rows.length === 0) {
-    return "ℹ️ No completed builds found yet.";
+    return "\u2139\uFE0F No completed builds found yet.";
   }
 
-  const lines = ["Latest Builds", ""];
+  const lines = ["\u{1F4E6} Latest Builds", ""];
   rows.forEach((row, index) => {
-    lines.push(`${index + 1}.  ${(row.device_codename || "UNKNOWN").toUpperCase()} •  ${row.rom_version || "Unknown"} •  ${normalizeAndroidTag(row.android)}`);
+    lines.push(`${index + 1}. \u{1F4F1} ${(row.device_codename || "UNKNOWN").toUpperCase()} • \u{1F9E9} ${row.rom_version || "Unknown"} • \u{1F916} ${normalizeAndroidTag(row.android)}`);
     if (row.drive_link) {
-      lines.push(`    ${compactLink(row.drive_link)}`);
+      lines.push(`   \u{1F517} ${compactLink(row.drive_link)}`);
     }
   });
   return lines.join("\n");
@@ -421,12 +421,12 @@ async function formatQueueBuilds(env) {
   const results = await env.medo_lite_bot.prepare(query).bind(...ACTIVE_BUILD_STATUS_ORDER, PRIVATE_BUILDS_LIMIT).all();
   const rows = results?.results || [];
   if (rows.length === 0) {
-    return "ℹ️ No active builds found.";
+    return "\u2139\uFE0F No active builds found.";
   }
 
-  const lines = ["Build Queue", ""];
+  const lines = ["\u{1F7E1} Build Queue", ""];
   rows.forEach((row, index) => {
-    lines.push(`${index + 1}.  ${(row.device_codename || "UNKNOWN").toUpperCase()} • ${row.status || "Unknown"}`);
+    lines.push(`${index + 1}. \u{1F4F1} ${(row.device_codename || "UNKNOWN").toUpperCase()} • ${row.status || "Unknown"}`);
   });
   return lines.join("\n");
 }

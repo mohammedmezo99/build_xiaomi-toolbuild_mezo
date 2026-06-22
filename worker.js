@@ -336,7 +336,7 @@ async function handleDeviceCommand(env, args) {
   return [
     `${codename.toUpperCase()}`,
     "",
-    `📱 Device: ${latest.deviceName || "Unknown Xiaomi Device"}`,
+    `ℹ️ Device: ${latest.deviceName || "Unknown Xiaomi Device"}`,
     `Latest ROM: ${latest.romVersion || "Unknown"}`,
     `Region: ${latest.region || "Unknown"}`,
     `Android: ${latest.android || "Unknown"}`,
@@ -367,12 +367,12 @@ async function formatLatestBuild(env) {
   return [
     "\u2705 Latest DeadZone Lite Build",
     "",
-    `Device: ${row.device_name || "Unknown"}`,
-    `ROM: ${row.rom_version || "Unknown"}`,
-    `Region: ${row.region || "Unknown"}`,
-    `Android: ${normalizeAndroidTag(row.android)}`,
+    ` Device: ${row.device_name || "Unknown"}`,
+    ` ROM: ${row.rom_version || "Unknown"}`,
+    ` Region: ${row.region || "Unknown"}`,
+    ` Android: ${normalizeAndroidTag(row.android)}`,
     "",
-    "Download:",
+    " Download:",
     row.drive_link,
   ].join("\n");
 }
@@ -461,11 +461,11 @@ async function formatCurrentStatus(env) {
   return [
     "Current Status",
     "",
-    `Status: ${row.status || "Unknown"}`,
-    `Device: ${row.device_name || "Unknown"}`,
-    `ROM: ${row.rom_version || "Unknown"}`,
-    `Requested by: ${row.user_name || "Unknown"}`,
-    `Updated: ${formatStatusTime(row.updated_at)}`,
+    ` Status: ${row.status || "Unknown"}`,
+    ` Device: ${row.device_name || "Unknown"}`,
+    ` ROM: ${row.rom_version || "Unknown"}`,
+    ` Requested by: ${row.user_name || "Unknown"}`,
+    ` Updated: ${formatStatusTime(row.updated_at)}`,
   ].join("\n");
 }
 

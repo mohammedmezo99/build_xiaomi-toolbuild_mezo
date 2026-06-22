@@ -47,6 +47,59 @@ else
     os_type="HyperOS"
 fi
 
+version="$polyxver"
+if [[ $version == v* ]]; then
+    version="V${version:1}"
+fi
+
+codename=$(printf '%s' "$device_f" | tr '[:lower:]' '[:upper:]')
+
+case "$regionTYPE" in
+    China)
+        region_stable="ChinaStable"
+        ;;
+    Global)
+        region_stable="GlobalStable"
+        ;;
+    EEAGlobal)
+        region_stable="EEAStable"
+        ;;
+    INGlobal)
+        region_stable="IndiaStable"
+        ;;
+    IDGlobal)
+        region_stable="IndonesiaStable"
+        ;;
+    RUGlobal)
+        region_stable="RussiaStable"
+        ;;
+    TWGlobal)
+        region_stable="TaiwanStable"
+        ;;
+    TRGlobal)
+        region_stable="TurkeyStable"
+        ;;
+    JPGlobal)
+        region_stable="JapanStable"
+        ;;
+    "")
+        region_stable="UnknownStable"
+        ;;
+    *)
+        region_stable="$regionTYPE"
+        ;;
+esac
+
+android_raw="$androidVER"
+if [[ $android_raw == A* ]]; then
+    android_tag="$android_raw"
+else
+    android_tag="A${android_raw%%.*}"
+fi
+
+final_zip="DeadZoneLite_${version}_${codename}_${base_rom_code}_${region_stable}-${android_tag}.zip"
+output_file="out/${final_zip}"
+
 repack "Compressing super.img"
 zstd --rm $work_dir/build/baserom/images/super.img -o $work_dir/build/baserom/images/super.img.zst > /dev/null 2>&1
 
@@ -74,13 +127,12 @@ pushd out/${os_type}_${device_code}_${base_rom_code}/ || exit
 zip -r ${os_type}_${device_code}_${base_rom_code}.zip ./*
 mv ${os_type}_${device_code}_${base_rom_code}.zip ../
 popd || exit
-hash=$(md5sum out/${os_type}_${device_code}_${base_rom_code}.zip |head -c 5)
-mv out/${os_type}_${device_code}_${base_rom_code}.zip out/${os_type}_${polyxver}_${device_code}_${base_rom_code}_${hash}_${status}.zip
+mv out/${os_type}_${device_code}_${base_rom_code}.zip "$output_file"
+echo "$final_zip" > "$work_dir/bin/ddevice/output_zip.txt"
 repack "Build completed"    
 repack "Output: "
-repack "$(pwd)/out/${os_type}_${polyxver}_${device_code}_${base_rom_code}_${hash}_${status}.zip"
+repack "$(pwd)/$output_file"
 upload "Uploading"
-output_file="out/${os_type}_${polyxver}_${device_code}_${base_rom_code}_${hash}_${status}.zip"
 
 if [[ $rom_os == "MIUI" ]];then
     uploaddir="MIUI"

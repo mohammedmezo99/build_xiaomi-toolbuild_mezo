@@ -1,7 +1,8 @@
 work_dir=$(pwd)
 source $work_dir/functions.sh
 RCLONE_CONFIG_1DRIVE="$work_dir/rclone.conf"
-ONEDRIVE_REMOTE="starxONEDRIVE"
+RCLONE_REMOTE_NAME="${RCLONE_REMOTE_NAME:-gdrive}"
+RCLONE_UPLOAD_DIR="${RCLONE_UPLOAD_DIR:-DeadZoneBuilds/medo_lite}"
 os_type=$(cat $work_dir/bin/ddevice/os_type.txt)
 base_rom_code=$(cat $work_dir/bin/ddevice/base_rom_code.txt)
 androidVER=$(cat $work_dir/bin/ddevice/androidver.txt)
@@ -12,14 +13,22 @@ baserom_type=$(cat $work_dir/bin/ddevice/romtype.txt)
 device_f=$(cat $work_dir/bin/ddevice/device_f.txt)
 
 if [ "$1" == "setup" ]; then
-  if [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ]; then
-    echo "[ERROR] - Please provide rclone token and remote name"
+  if [ -z "${RCLONE_CONFIG_BASE64:-}" ]; then
+    echo "[ERROR] - Missing RCLONE_CONFIG_BASE64"
     exit 1
   fi
-  curl  -s -o $work_dir/rclone.conf \
-        -H "Authorization: token $2" \
-        -H "Accept: application/vnd.github.v3.raw" \
-        -L https://api.github.com/repos/$3/contents/$4
+
+  if ! printf '%s' "$RCLONE_CONFIG_BASE64" | base64 -d > "$work_dir/rclone.conf" 2>/dev/null; then
+    echo "[ERROR] - Invalid RCLONE_CONFIG_BASE64"
+    rm -f "$work_dir/rclone.conf"
+    exit 1
+  fi
+
+  if [ ! -s "$work_dir/rclone.conf" ]; then
+    echo "[ERROR] - Failed to create rclone.conf"
+    exit 1
+  fi
+
   exit 0
 fi
 
@@ -80,17 +89,10 @@ else
 fi
 
 # 1drive
-if [[ $rom_os == "MIUI" ]]; then
-    rclone -v --config="$RCLONE_CONFIG_1DRIVE" copy "$output_file" "$ONEDRIVE_REMOTE:NTBuild/${uploaddir}/${polyxver}PS/${device_code}/" || {
-        upload "Error uploading file to OneDrive: $FILENAME"
-        exit 1
-    }
-else
-    rclone -v --config="$RCLONE_CONFIG_1DRIVE" copy "$output_file" "$ONEDRIVE_REMOTE:NTBuild/${uploaddir}/${polyxver}PS/${device_code}/" || {
-        upload "Error uploading file to OneDrive: $FILENAME"
-        exit 1
-    }
-fi  
+rclone -v --config="$RCLONE_CONFIG_1DRIVE" copy "$output_file" "$RCLONE_REMOTE_NAME:$RCLONE_UPLOAD_DIR/" || {
+    upload "Error uploading file to remote: $output_file"
+    exit 1
+}
 
 upload "Clean Workflow.."
 rm -rf $work_dir/out

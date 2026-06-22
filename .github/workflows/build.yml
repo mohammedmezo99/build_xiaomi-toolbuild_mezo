@@ -18,7 +18,17 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+      MEZO_PRIVATE_CHAT_ID: ${{ secrets.MEZO_PRIVATE_CHAT_ID }}
+      TELEGRAM_CHAT_GROUP_ID: ${{ secrets.TELEGRAM_CHAT_GROUP_ID }}
+      TELEGRAM_RELEASE_GROUP_ID: ${{ secrets.TELEGRAM_RELEASE_GROUP_ID }}
+      RCLONE_CONFIG_BASE64: ${{ secrets.RCLONE_CONFIG_BASE64 }}
+      RCLONE_REMOTE_NAME: ${{ secrets.RCLONE_REMOTE_NAME }}
+      RCLONE_UPLOAD_DIR: ${{ secrets.RCLONE_UPLOAD_DIR }}
+      MEZO_CONTACT_LINK: ${{ secrets.MEZO_CONTACT_LINK }}
+      UPDATES_GROUP_LINK: ${{ secrets.UPDATES_GROUP_LINK }}
+      SCREENSHOTS_GROUP_LINK: ${{ secrets.SCREENSHOTS_GROUP_LINK }}
+      CHAT_GROUP_LINK: ${{ secrets.CHAT_GROUP_LINK }}
+      TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_RELEASE_GROUP_ID }}
     steps:
       - name: Clean All Unused file,application
         run: |
@@ -74,7 +84,7 @@ jobs:
 
       - name: Setup Rclone...
         run: |
-          sudo -E bash uploadROM.sh setup "${{ secrets.GH_TOKEN }}" "${{ secrets.GH_REPO }}" "${{ secrets.RCLONE_TOKEN_PATH }}"
+          sudo -E bash uploadROM.sh setup
           
       - name: Upload ROM...
         run: |

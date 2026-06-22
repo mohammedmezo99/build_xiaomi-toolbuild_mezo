@@ -267,11 +267,14 @@ async function handleRomsCommand(env, args) {
   const limit = showAll ? PUBLIC_ROM_ALL_LIMIT : PUBLIC_ROM_LIMIT;
   const truncated = roms.length > limit;
   const selected = roms.slice(0, limit);
-  const lines = [`${codename.toUpperCase()} OTA ROMs`, ""];
+  const exampleRegion = (selected[0]?.region || "china").toLowerCase();
+  const lines = [`OTA ROMs for ${codename.toUpperCase()}`, ""];
 
   selected.forEach((rom, index) => {
-    lines.push(`${index + 1}.  ${rom.region} •  ${rom.romVersion} •  ${rom.android}`);
-    lines.push(`   /mezo ${rom.downloadLink}`);
+    lines.push(`${toKeycapNumber(index + 1)}  Region: ${rom.region}`);
+    lines.push(`Version: ${rom.romVersion}`);
+    lines.push(`Android: ${rom.android}`);
+    lines.push(`/mezo ${rom.downloadLink}`);
     lines.push("");
   });
 
@@ -284,6 +287,11 @@ async function handleRomsCommand(env, args) {
   if (lookup.usedCachedResults) {
     lines.push("ℹ️ Showing cached results.");
   }
+
+  if (lines[lines.length - 1] !== "") {
+    lines.push("");
+  }
+  lines.push(`⚡ To build directly, send: /build ${codename} ${exampleRegion}`);
 
   return lines.join("\n").trim();
 }
@@ -998,8 +1006,26 @@ function inferRegion(codename, name, version, link) {
 
 function normalizeAndroidTag(value) {
   const text = String(value || "").trim();
-  const digits = text.replace(/[^0-9]/g, "");
-  return digits ? `A${digits}` : "Unknown";
+  if (!text) {
+    return "Unknown";
+  }
+
+  const numericMatch = text.match(/^(\d+)(?:\.\d+)?$/);
+  if (numericMatch) {
+    return `A${numericMatch[1]}`;
+  }
+
+  const androidMatch = text.match(/(\d+)(?:\.\d+)?/);
+  if (androidMatch) {
+    return `A${androidMatch[1]}`;
+  }
+
+  return "Unknown";
+}
+
+function toKeycapNumber(value) {
+  const keycaps = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
+  return keycaps[value - 1] || `${value}.`;
 }
 
 function formatStatusTime(value) {

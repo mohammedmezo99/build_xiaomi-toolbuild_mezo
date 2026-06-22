@@ -6,6 +6,18 @@ on:
       input_url:
         description: 'URL of the ROM to build'
         required: true
+      request_source:
+        description: 'Request source label'
+        required: false
+        default: 'github'
+      publish_release:
+        description: 'Publish release automatically?'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
       builder_name:
         description: 'Name of the builder'
         required: false
@@ -28,7 +40,8 @@ jobs:
       UPDATES_GROUP_LINK: ${{ secrets.UPDATES_GROUP_LINK }}
       SCREENSHOTS_GROUP_LINK: ${{ secrets.SCREENSHOTS_GROUP_LINK }}
       CHAT_GROUP_LINK: ${{ secrets.CHAT_GROUP_LINK }}
-      TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_RELEASE_GROUP_ID }}
+      REQUEST_SOURCE: ${{ inputs.request_source }}
+      PUBLISH_RELEASE: ${{ inputs.publish_release }}
     steps:
       - name: Clean All Unused file,application
         run: |
@@ -62,15 +75,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@main
 
-      - name: Install Stuff & Start Notify
+      - name: Install Stuff
         run: |
           pip install requests
           sudo bash setup.sh
-          python notify.py start "${{ github.repository }}" "${{ inputs.input_url }}" "xst" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+
+      - name: Request Received Notification
+        run: |
+          echo "CURRENT_STAGE=request_acknowledged" >> "$GITHUB_ENV"
+          python3 notify.py private request_received
         
       - name: Giving permission
         run: |
           sudo chmod 777 -R *
+
+      - name: Build Started Notification
+        run: |
+          echo "CURRENT_STAGE=build" >> "$GITHUB_ENV"
+          python3 notify.py private build_started
 
       - name: Build ROM...
         env:
@@ -78,25 +100,46 @@ jobs:
         run: |
           sudo bash build.sh "$INPUT_URL" "${{ github.repository }}" "xst" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
 
+      - name: Packaging Started Notification
+        run: |
+          echo "CURRENT_STAGE=package" >> "$GITHUB_ENV"
+          python3 notify.py private packaging_started
+
       - name: Pack ROM...
         run: |
           sudo bash packROM.sh
 
       - name: Setup Rclone...
         run: |
+          echo "CURRENT_STAGE=setup_rclone" >> "$GITHUB_ENV"
           sudo -E bash uploadROM.sh setup
-          
+
+      - name: Upload Started Notification
+        run: |
+          echo "CURRENT_STAGE=upload_drive" >> "$GITHUB_ENV"
+          python3 notify.py private upload_started
+
       - name: Upload ROM...
         run: |
-          python notify.py upload "${{ github.repository }}" "${{ inputs.input_url }}" "xst" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
           sudo -E bash uploadROM.sh
-      
+
       - name: Success Notification
         if: success()
         run: |
-          python notify.py success "${{ github.repository }}" "${{ inputs.input_url }}" "xst" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+          python3 notify.py private success
+
+      - name: Release Notification
+        if: success() && (startsWith(inputs.request_source, 'telegram') || inputs.publish_release == 'true')
+        run: |
+          echo "CURRENT_STAGE=release_notification" >> "$GITHUB_ENV"
+          python3 notify.py release success
+
+      - name: Publish Prompt Notification
+        if: success() && !(startsWith(inputs.request_source, 'telegram') || inputs.publish_release == 'true')
+        run: |
+          python3 notify.py private publish_prompt
 
       - name: Failure Notification
         if: failure()
         run: |
-          python notify.py fail "${{ github.repository }}" "${{ inputs.input_url }}" "xst" "${{ inputs.builder_name }}" "${{ inputs.builder_id }}"
+          python3 notify.py private fail

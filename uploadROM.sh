@@ -147,15 +147,15 @@ rclone -v --config="$RCLONE_CONFIG_1DRIVE" copy "$output_file" "$RCLONE_REMOTE_N
 }
 
 remote_file="$RCLONE_REMOTE_NAME:$RCLONE_UPLOAD_DIR/$final_zip"
-drive_link="$(rclone -q --config="$RCLONE_CONFIG_1DRIVE" link "$remote_file" 2>/dev/null || true)"
+drive_link="$(rclone --config="$RCLONE_CONFIG_1DRIVE" link "$remote_file" 2>/dev/null || true)"
 
-if [ -z "$drive_link" ]; then
-    upload "Error generating Google Drive link for: $remote_file"
+if [ -z "$drive_link" ] || [[ "$drive_link" != *"drive.google.com"* && "$drive_link" != *"googleusercontent.com"* ]]; then
+    upload "Error generating public Google Drive link"
     exit 1
 fi
 
 echo "$drive_link" > "$work_dir/bin/ddevice/drive_link.txt"
-upload "Drive link generated"
+upload "Public Drive link generated"
 
 upload "Clean Workflow.."
 rm -rf $work_dir/out

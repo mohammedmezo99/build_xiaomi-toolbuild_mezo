@@ -271,19 +271,51 @@ def format_release_caption() -> str:
     drive_link = metadata["drive_link"].strip()
     if not drive_link:
         raise RuntimeError("Missing Google Drive link")
+
     version = (metadata["version"] or "").strip()
     if version[:1].lower() == "v":
-        version = f"V{version[1:]}"
+        version = f"v{version[1:]}"
+    elif version:
+        version = f"v{version}"
+
+    changelog_link = "https://t.me/DeadZoneCloud/676"
+    developer_link = "https://t.me/MohamedMezo1"
 
     return (
-        f"<b>DeadZone Lite {html.escape(version)}</b>\n\n"
-        f"<b>{html.escape(metadata['device_name'])}</b>\n"
-        f"{html.escape(metadata['rom_version'])} •  {html.escape(metadata['region'])} •  {html.escape(metadata['android'])}\n\n"
-        "Built from clean official base.\n"
-        "\u26a1 Optimized and repacked by <b>MEZO</b>.\n\n"
-        f"\u2b07\ufe0f <b>Download</b> <a href=\"{safe_link(drive_link)}\">Click here</a>\n\n"
-        f"#{html.escape(metadata['codename_lower'])} #DeadZoneLite #MEZO"
+        f"🚀 <b>DeadZone Lite {html.escape(version)} Released</b>
+
+"
+        f"📱 <b>Device:</b> {html.escape(metadata['device_name'])}
+"
+        f"🧩 <b>Codename:</b> #{html.escape(metadata['codename_lower'])}
+"
+        f"⚙️ <b>ROM:</b> {html.escape(metadata['rom_version'])}
+"
+        f"🌍 <b>Region:</b> {html.escape(metadata['region'])}
+"
+        f"🤖 <b>Android:</b> {html.escape(metadata['android'])}
+
+"
+        "━━━━━━━━━━━━━━━
+
+"
+        f"📋 <a href=\"{safe_link(changelog_link)}\">Changelogs</a>
+"
+        f"👨‍💻 <a href=\"{safe_link(developer_link)}\">Developer MEZO</a>
+
+"
+        "━━━━━━━━━━━━━━━
+
+"
+        f"⬇️ <b>Download:</b> <a href=\"{safe_link(drive_link)}\">Click Here</a>
+
+"
+        "━━━━━━━━━━━━━━━
+"
+        f"#{html.escape(metadata['codename_lower'])} #DeadZoneLite "
+        f"#{html.escape(metadata['os_tag'])} #{html.escape(metadata['android_hash_tag'])} #MEZO"
     )
+
 
 
 def telegram_api_url(method: str) -> str:

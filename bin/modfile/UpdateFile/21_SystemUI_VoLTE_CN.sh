@@ -4,8 +4,8 @@
 # Goal: Hide 4G icon and show VoLTE on Statusbar for OS2/OS3 China ROMs.
 set -euo pipefail
 
-work_dir="$(pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+work_dir="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TMP_DIR="$work_dir/tmp/systemui_volte_cn_$$"
 APK_NAME="MiuiSystemUI.apk"
 SRC_NAME="MiuiSystemUI_apk_src"
@@ -223,4 +223,5 @@ cp -f "$OUT_APK" "$TARGET_APK"
 chmod "$OLD_MODE" "$TARGET_APK" 2>/dev/null || true
 
 mod_log "SystemUI VoLTE CN patch applied successfully."
+
 

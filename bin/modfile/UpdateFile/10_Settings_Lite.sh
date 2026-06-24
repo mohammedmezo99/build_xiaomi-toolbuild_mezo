@@ -3,8 +3,8 @@
 # Independent script: only patches Settings.apk.
 set -euo pipefail
 
-work_dir="$(pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+work_dir="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 ASSET_DIR="$SCRIPT_DIR/Lite/Settings_Lite"
 TMP_DIR="$work_dir/tmp/settings_lite_$$"
 APK_NAME="Settings.apk"
@@ -309,4 +309,5 @@ rm -f "$TARGET_APK"
 cp -f "$OUT_APK" "$TARGET_APK"
 chmod "$OLD_MODE" "$TARGET_APK" 2>/dev/null || true
 lite_log "Settings Lite applied successfully."
+
 

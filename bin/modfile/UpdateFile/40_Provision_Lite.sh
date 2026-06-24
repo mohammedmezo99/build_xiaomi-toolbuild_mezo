@@ -4,8 +4,8 @@
 # Target path priority: system_ext/priv-app/Provision.apk
 set -euo pipefail
 
-work_dir="$(pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+work_dir="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TMP_DIR="$work_dir/tmp/provision_lite_$$"
 APK_NAME="Provision.apk"
 SRC_NAME="Provision_apk_src"
@@ -218,4 +218,5 @@ cp -f "$OUT_APK" "$TARGET_APK"
 chmod "$OLD_MODE" "$TARGET_APK" 2>/dev/null || true
 
 mod_log "Provision Lite strings patch applied successfully."
+
 

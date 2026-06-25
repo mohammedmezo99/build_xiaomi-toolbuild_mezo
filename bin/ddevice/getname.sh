@@ -2,6 +2,7 @@
 work_dir=$(pwd)
 source "$work_dir/functions.sh"
 
+FILE_JSON0="$work_dir/bin/ddevice/data/deadzone_devices.json"
 FILE_JSON1="$work_dir/bin/ddevice/data/devices.json"
 FILE_JSON2="$work_dir/bin/ddevice/data/names.json"
 
@@ -16,12 +17,16 @@ read_clean() {
   cat "$file" 2>/dev/null | tr -d '\000\377\376\r\n'
 }
 
-KEY="$(read_clean "$work_dir/bin/ddevice/device_f.txt")"
+ARG_KEY="${1:-}"
+KEY="${ARG_KEY:-$(read_clean "$work_dir/bin/ddevice/device_f.txt")}"
 CODE="$(read_clean "$work_dir/bin/ddevice/device_code.txt")"
+
+KEY="$(echo "$KEY" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+CODE="$(echo "$CODE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 
 is_bad_value() {
   local value="$1"
-  [[ -z "$value" || "$value" == "null" || "$value" == *"Not found"* ]]
+  [[ -z "$value" || "$value" == "null" || "$value" == *"Not found"* || "$value" == *"Không tìm thấy"* ]]
 }
 
 lookup_json_case_insensitive() {
@@ -63,7 +68,7 @@ CANDIDATES=(
 for candidate in "${CANDIDATES[@]}"; do
   [ -n "$candidate" ] || continue
 
-  for json_file in "$FILE_JSON1" "$FILE_JSON2"; do
+  for json_file in "$FILE_JSON0" "$FILE_JSON1" "$FILE_JSON2"; do
     result="$(lookup_json_case_insensitive "$json_file" "$candidate")"
     if ! is_bad_value "$result"; then
       VALUE="$result"
@@ -72,6 +77,7 @@ for candidate in "${CANDIDATES[@]}"; do
   done
 done
 
+# Fallback from extracted build.prop files.
 if is_bad_value "$VALUE"; then
   while IFS= read -r prop_file; do
     [ -f "$prop_file" ] || continue
@@ -96,6 +102,7 @@ if is_bad_value "$VALUE"; then
   done < <(find "$work_dir/build/baserom/images" -type f -name "build.prop" 2>/dev/null)
 fi
 
+# Final safe fallback. Never write "Not found key".
 if is_bad_value "$VALUE"; then
   if [ -n "$KEY" ]; then
     VALUE="Xiaomi ${KEY^^}"

@@ -1,11 +1,35 @@
 const TARGET_GITHUB_REPO = "mohammedmezo99/medo_lite";
 const DEFAULT_WORKFLOW_FILE = "build.yml";
-const INVALID_USAGE_MESSAGE = "Please send /mezo <ROM_LINK> with a valid ROM link.";
+const INVALID_USAGE_MESSAGE =
+  "Usage:
+" +
+  "/mezo <ROM_LINK> — Build from direct ROM link
+" +
+  "/mezo <codename> — Show available DeadZone builds
+
+" +
+  "Examples:
+" +
+  "/mezo https://example.com/rom.zip
+" +
+  "/mezo zircon";
 const BUILD_USAGE_MESSAGE = "Usage:\n/build <codename> <region>\n/build <codename> latest\n\nExample:\n/build zircon china";
 const DISPATCH_FAILURE_MESSAGE = "Build request could not be started. Please contact MEZO.";
 const ACK_MESSAGE = "\u{1F4E5} Link received by MEZO.\n\u26A1 DeadZone Lite is now building.\n\u23F3 Please wait 40–60 minutes.";
 const HELP_MESSAGE =
-  "MEZO Lite Bot\n\n/mezo <ROM_LINK> — Build from link\n/build <codename> <region> — Build latest region ROM\n/build <codename> latest — Build latest available ROM\n/roms <codename> — Find OTA ROMs\n/regions <codename> — Available regions\n/device <codename> — Device summary\n/latest — Latest completed build\n/builds — Recent builds\n/status — Private only";
+  "🔥 DeadZone Lite Bot
+
+" +
+  "/mezo <ROM_LINK> — Build from direct ROM link
+" +
+  "/mezo <codename> — Show available DeadZone builds
+
+" +
+  "Examples:
+" +
+  "/mezo https://example.com/rom.zip
+" +
+  "/mezo zircon";
 const ROM_SOURCE_URL =
   "https://raw.githubusercontent.com/XiaomiFirmwareUpdater/miui-updates-tracker/master/data/latest.yml";
 const ROM_SOURCE_NAME = "XiaomiFirmwareUpdater/miui-updates-tracker";
@@ -67,7 +91,15 @@ async function handleTelegramWebhook(request, env) {
   }
 
   const message = update?.message;
-  if (!message || typeof message.text !== "string") {
+  if (!message) {
+    return new Response("OK", { status: 200 });
+  }
+
+  if (Array.isArray(message.new_chat_members) && message.new_chat_members.length > 0) {
+    return handleNewChatMembers(env, message);
+  }
+
+  if (typeof message.text !== "string") {
     return new Response("OK", { status: 200 });
   }
 
@@ -184,16 +216,136 @@ async function handlePrivateListCommand(env, message, chatId, chatType, isPublic
 }
 
 async function handleMezoCommand(env, message, args) {
-  const romLink = args.trim();
-  if (!isValidHttpUrl(romLink)) {
-    await sendTelegramMessage(env, String(message.chat?.id ?? ""), INVALID_USAGE_MESSAGE, message.message_id);
+  const chatId = String(message.chat?.id ?? "");
+  const input = args.trim();
+
+  if (!input) {
+    await sendTelegramMessage(env, chatId, INVALID_USAGE_MESSAGE, message.message_id);
     return okResponse();
   }
 
-  await startBuildFromRomLink(env, message, romLink, {
-    ackMessage: ACK_MESSAGE,
-  });
+  // Mode 1: direct ROM link -> build normally.
+  if (isValidHttpUrl(input)) {
+    await startBuildFromRomLink(env, message, input, {
+      ackMessage: ACK_MESSAGE,
+    });
+    return okResponse();
+  }
+
+  // Mode 2: codename -> show DeadZone builds already available.
+  const tokens = splitArgs(input);
+  if (tokens.length !== 1) {
+    await sendTelegramMessage(env, chatId, INVALID_USAGE_MESSAGE, message.message_id);
+    return okResponse();
+  }
+
+  const codename = normalizeLookupCodename(tokens[0] || "");
+  if (!codename) {
+    await sendTelegramMessage(env, chatId, INVALID_USAGE_MESSAGE, message.message_id);
+    return okResponse();
+  }
+
+  await sendTelegramMessage(env, chatId, await formatPublishedRomsForCodename(env, codename), message.message_id);
   return okResponse();
+}
+
+
+async function handleNewChatMembers(env, message) {
+  const chatId = String(message.chat?.id ?? "");
+  const publicChatId = String(env.TELEGRAM_CHAT_GROUP_ID ?? "");
+
+  if (!chatId || chatId !== publicChatId) {
+    return okResponse();
+  }
+
+  const members = message.new_chat_members.filter((member) => !member.is_bot);
+  if (members.length === 0) {
+    return okResponse();
+  }
+
+  const names = members
+    .slice(0, 3)
+    .map((member) => formatMemberName(member))
+    .join(", ");
+
+  const text = [
+    `👋 Welcome ${names} to DeadZone Discussion!`,
+    "",
+    "🔥 DeadZone Lite Builds",
+    "",
+    "Use:",
+    "/mezo <codename> — Show available DeadZone builds",
+    "/mezo <ROM_LINK> — Request a new Lite build",
+    "",
+    "Example:",
+    "/mezo zircon",
+    "",
+    "Need help? Contact MEZO:",
+    "https://t.me/MohamedMezo1",
+  ].join("\n");
+
+  await sendTelegramMessage(env, chatId, text, message.message_id);
+  return okResponse();
+}
+
+function formatMemberName(member) {
+  const firstName = String(member.first_name || "").trim();
+  const lastName = String(member.last_name || "").trim();
+  const username = String(member.username || "").trim();
+
+  if (firstName || lastName) {
+    return `${firstName} ${lastName}`.trim();
+  }
+
+  if (username) {
+    return `@${username}`;
+  }
+
+  return "new member";
+}
+
+async function formatPublishedRomsForCodename(env, codename) {
+  const query = `
+    SELECT device_codename, device_name, rom_version, region, android, drive_link, updated_at
+    FROM builds
+    WHERE status = 'success'
+      AND drive_link IS NOT NULL
+      AND TRIM(drive_link) != ''
+      AND LOWER(COALESCE(device_codename, '')) = ?
+    ORDER BY datetime(updated_at) DESC, id DESC
+    LIMIT 10
+  `;
+
+  const results = await env.medo_lite_bot.prepare(query).bind(codename).all();
+  const rows = results?.results || [];
+
+  if (rows.length === 0) {
+    return [
+      `❌ No DeadZone builds found for ${codename.toUpperCase()}.`,
+      "",
+      "This device has no published DeadZone Lite builds yet.",
+      "",
+      "You can request a new build with:",
+      "/mezo <ROM_LINK>",
+    ].join("\n");
+  }
+
+  const lines = [`📦 DeadZone Builds for ${codename.toUpperCase()}`, ""];
+
+  rows.forEach((row, index) => {
+    lines.push(`${toKeycapNumber(index + 1)} ${row.device_name || "Unknown Xiaomi Device"}`);
+    lines.push(`🧩 ROM: ${row.rom_version || "Unknown"}`);
+    lines.push(`🌍 Region: ${row.region || "Unknown"}`);
+    lines.push(`🤖 Android: ${normalizeAndroidTag(row.android)}`);
+    lines.push(`⬇️ Download: ${compactLink(row.drive_link)}`);
+    lines.push("");
+  });
+
+  lines.push("━━━━━━━━━━━━━━━");
+  lines.push("To request a new build:");
+  lines.push("/mezo <ROM_LINK>");
+
+  return lines.join("\n").trim();
 }
 
 async function handleBuildCommand(env, message, args) {

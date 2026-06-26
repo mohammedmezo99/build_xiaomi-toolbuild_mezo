@@ -172,6 +172,39 @@ def safe_link(value: str) -> str:
     return html.escape((value or "").strip(), quote=True)
 
 
+
+def load_device_database(relative_path: str) -> dict:
+    path = ROOT / relative_path
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def canonical_device_name(codename: str, fallback: str) -> str:
+    key = clean_codename(codename).lower()
+    fallback = (fallback or "").strip()
+
+    if not key or key == "unknown":
+        return fallback or "Unknown Xiaomi Device"
+
+    for relative_path in (
+        "bin/ddevice/data/deadzone_devices.json",
+        "bin/ddevice/data/devices.json",
+        "bin/ddevice/data/names.json",
+    ):
+        data = load_device_database(relative_path)
+        for raw_key, raw_value in data.items():
+            if clean_codename(str(raw_key)).lower() == key:
+                value = str(raw_value).strip()
+                if value and value.lower() not in {"null", "none", "unknown", "unknown xiaomi device"}:
+                    return value
+
+    return fallback or f"Xiaomi {key.upper()}"
+
 def get_metadata() -> dict:
     version = read_text("Version", "0.00")
     codename_raw = read_text("bin/ddevice/codename.txt") or read_text("bin/ddevice/device_code.txt")

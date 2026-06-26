@@ -559,7 +559,7 @@ async function formatRecentBuilds(env) {
   const lines = ["\u{1F4E6} Latest Builds", ""];
   rows.forEach((row, index) => {
     lines.push(`${index + 1}. \u{1F4F1} ${(row.device_codename || "UNKNOWN").toUpperCase()} • \u{1F9E9} ${row.rom_version || "Unknown"} • \u{1F916} ${normalizeAndroidTag(row.android)}`);
-    if (row.drive_link) {
+    if (String(row.drive_link || "").trim()) {
       lines.push(`   \u{1F517} ${compactLink(row.drive_link)}`);
     }
   });
@@ -692,6 +692,15 @@ async function handleInternalBuildSync(request, env) {
   }
 
   const metadata = sanitizeBuildMetadata(payload);
+  console.log("[worker] build sync payload received", {
+    status,
+    romLinkPresent: Boolean(romLink),
+    userIdPresent: Boolean(userId),
+    userNamePresent: Boolean(userName),
+    deviceCodename: metadata.deviceCodename || "",
+    driveLinkPresent: Boolean(metadata.driveLink),
+    finalZipPresent: Boolean(metadata.finalZip),
+  });
   const updated = await updateBuildFromWorkflow(env, {
     romLink,
     userId,
@@ -701,7 +710,7 @@ async function handleInternalBuildSync(request, env) {
     metadata,
   });
 
-  return Response.json({ ok: updated }, { status: updated ? 200 : 404 });
+  return Response.json({ ok: updated }, { status: 200 });
 }
 
 async function createBuildRecord(env, build) {
@@ -735,27 +744,56 @@ async function updateBuildAfterDispatchFailure(env, buildId) {
 }
 
 async function updateBuildFromWorkflow(env, build) {
+  const metadata = build.metadata || {};
+  const shouldPersistDriveLink = build.status === "success" && Boolean(metadata.driveLink);
+  if (build.status === "success" && !metadata.driveLink) {
+    console.warn("[worker] build sync missing drive link on success", {
+      romLinkPresent: Boolean(build.romLink),
+      userIdPresent: Boolean(build.userId),
+      deviceCodename: metadata.deviceCodename || "",
+    });
+  }
+
   const selectQuery = `
     SELECT id
     FROM builds
     WHERE rom_link = ?
-      AND (? = '' OR user_id = ?)
-      AND (? = '' OR user_name = ? OR user_name = '')
-    ORDER BY datetime(created_at) DESC, id DESC
+    ORDER BY
+      CASE
+        WHEN ? != '' AND COALESCE(user_id, '') = ? THEN 0
+        ELSE 1
+      END,
+      CASE
+        WHEN status = 'queued' THEN 0
+        WHEN status IN ('building', 'uploading') THEN 1
+        ELSE 2
+      END,
+      datetime(created_at) DESC,
+      id DESC
     LIMIT 1
   `;
   const row = await env.medo_lite_bot
     .prepare(selectQuery)
-    .bind(build.romLink, build.userId, build.userId, build.userName, build.userName)
+    .bind(build.romLink, build.userId, build.userId)
     .first();
 
   if (!row?.id) {
-    return false;
+    await insertBuildRecordFromSync(env, build);
+    console.log("[worker] new build row inserted by sync", {
+      status: build.status,
+      romLinkPresent: Boolean(build.romLink),
+      userIdPresent: Boolean(build.userId),
+      deviceCodename: metadata.deviceCodename || "",
+      driveLinkPresent: shouldPersistDriveLink,
+    });
+    return true;
   }
 
   const query = `
     UPDATE builds
-    SET status = ?,
+    SET user_id = COALESCE(NULLIF(?, ''), user_id),
+        user_name = COALESCE(NULLIF(?, ''), user_name),
+        status = ?,
         device_codename = COALESCE(NULLIF(?, ''), device_codename),
         device_name = COALESCE(NULLIF(?, ''), device_name),
         rom_version = COALESCE(NULLIF(?, ''), rom_version),
@@ -770,20 +808,58 @@ async function updateBuildFromWorkflow(env, build) {
   await env.medo_lite_bot
     .prepare(query)
     .bind(
+      build.userId,
+      build.userName,
       build.status,
-      build.metadata.deviceCodename,
-      build.metadata.deviceName,
-      build.metadata.romVersion,
-      build.metadata.region,
-      build.metadata.android,
-      build.metadata.finalZip,
-      build.metadata.driveLink,
+      metadata.deviceCodename,
+      metadata.deviceName,
+      metadata.romVersion,
+      metadata.region,
+      metadata.android,
+      metadata.finalZip,
+      shouldPersistDriveLink ? metadata.driveLink : "",
       build.updatedAt,
       row.id,
     )
     .run();
 
+  console.log("[worker] existing build row updated by sync", {
+    id: row.id,
+    status: build.status,
+    deviceCodename: metadata.deviceCodename || "",
+    driveLinkPersisted: shouldPersistDriveLink,
+  });
   return true;
+}
+
+async function insertBuildRecordFromSync(env, build) {
+  const metadata = build.metadata || {};
+  const driveLink = build.status === "success" ? metadata.driveLink : "";
+  const query = `
+    INSERT INTO builds (
+      build_id, user_id, user_name, rom_link, status, device_codename, device_name, rom_version, region, android, final_zip, drive_link, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `;
+
+  await env.medo_lite_bot
+    .prepare(query)
+    .bind(
+      null,
+      build.userId || null,
+      build.userName || null,
+      build.romLink,
+      build.status,
+      metadata.deviceCodename || null,
+      metadata.deviceName || null,
+      metadata.romVersion || null,
+      metadata.region || null,
+      metadata.android || null,
+      metadata.finalZip || null,
+      driveLink || null,
+      build.updatedAt,
+      build.updatedAt,
+    )
+    .run();
 }
 
 async function fetchBuildableRomsForCodename(env, codename, options = {}) {

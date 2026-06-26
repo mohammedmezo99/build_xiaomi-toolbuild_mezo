@@ -363,6 +363,9 @@ def sync_worker_build_status(status: str) -> None:
         "drive_link": metadata["drive_link"],
     }
 
+    if status == "success" and not payload["drive_link"].strip():
+        print("[notify] warning: success sync has empty drive_link; check bin/ddevice/drive_link.txt", file=sys.stderr)
+
     try:
         response = requests.post(
             sync_url,

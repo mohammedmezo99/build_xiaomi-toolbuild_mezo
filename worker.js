@@ -43,6 +43,8 @@ const PUBLIC_ROM_LIMIT = 10;
 const PUBLIC_ROM_ALL_LIMIT = 20;
 const PUBLIC_BUILDS_LIMIT = 5;
 const PRIVATE_BUILDS_LIMIT = 5;
+const PUBLIC_API_BUILD_LIMIT = 50;
+const PUBLIC_API_CODENAME_BUILD_LIMIT = 20;
 const BUILD_STATUS_ORDER = ["queued", "building", "uploading", "success", "failed"];
 const ACTIVE_BUILD_STATUS_ORDER = ["queued", "building", "uploading"];
 const REGION_ORDER = ["China", "Global", "EEA", "India", "Indonesia", "Russia", "Turkey", "Taiwan", "Japan", "Unknown"];
@@ -75,12 +77,67 @@ const REGION_ALIASES = new Map([
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === "/api/builds" || url.pathname.startsWith("/api/buildscodename=")) {
+      return handlePublicBuildsApi(request, env);
+    }
     if (url.pathname === "/internal/builds/sync") {
       return handleInternalBuildSync(request, env);
     }
     return handleTelegramWebhook(request, env);
   },
 };
+
+async function handlePublicBuildsApi(request, env) {
+  if (request.method === "OPTIONS") {
+    return withPublicBuildsCors(new Response(null, { status: 204 }));
+  }
+
+  if (request.method !== "GET") {
+    return withPublicBuildsCors(new Response(JSON.stringify({ ok: false, builds: [] }), {
+      status: 405,
+      headers: { "content-type": "application/json; charset=UTF-8" },
+    }));
+  }
+
+  const url = new URL(request.url);
+  const codename = resolvePublicBuildsCodename(url);
+  const limit = codename ? PUBLIC_API_CODENAME_BUILD_LIMIT : PUBLIC_API_BUILD_LIMIT;
+  const query = `
+    SELECT id, device_name, device_codename, rom_version, region, android, final_zip, drive_link, updated_at
+    FROM builds
+    WHERE status = 'success'
+      AND drive_link IS NOT NULL
+      AND TRIM(drive_link) != ''
+      ${codename ? "AND LOWER(COALESCE(device_codename, '')) = ?" : ""}
+    ORDER BY datetime(updated_at) DESC, id DESC
+    LIMIT ?
+  `;
+
+  try {
+    const statement = env.medo_lite_bot.prepare(query);
+    const results = codename
+      ? await statement.bind(codename, limit).all()
+      : await statement.bind(limit).all();
+    const rows = Array.isArray(results?.results) ? results.results : [];
+    const builds = rows.map((row) => ({
+      id: row.id,
+      device_name: row.device_name || "Unknown Xiaomi Device",
+      device_codename: String(row.device_codename || "").trim().toLowerCase(),
+      rom_version: row.rom_version || "Unknown ROM",
+      region: row.region || "",
+      android: normalizeAndroidTag(row.android),
+      final_zip: row.final_zip || "",
+      drive_link: row.drive_link || "",
+      updated_at: row.updated_at || "",
+      style: "DeadZone Lite",
+    }));
+
+    return withPublicBuildsCors(Response.json({ ok: true, builds }));
+  } catch {
+    console.warn("[worker] public builds api failed");
+    return withPublicBuildsCors(Response.json({ ok: false, builds: [] }, { status: 503 }));
+  }
+}
 
 async function handleTelegramWebhook(request, env) {
   if (request.method !== "POST") {
@@ -1395,6 +1452,31 @@ function normalizeLookupCodename(value) {
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9_]+/g, "");
+}
+
+function resolvePublicBuildsCodename(url) {
+  const queryValue = normalizeLookupCodename(url.searchParams.get("codename") || "");
+  if (queryValue) {
+    return queryValue;
+  }
+
+  if (url.pathname.startsWith("/api/buildscodename=")) {
+    return normalizeLookupCodename(url.pathname.slice("/api/buildscodename=".length));
+  }
+
+  return "";
+}
+
+function withPublicBuildsCors(response) {
+  const headers = new Headers(response.headers);
+  headers.set("Access-Control-Allow-Origin", "*");
+  headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+  headers.set("Access-Control-Allow-Headers", "Content-Type");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function normalizeBaseCodename(value) {

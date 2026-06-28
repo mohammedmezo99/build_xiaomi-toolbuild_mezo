@@ -1619,6 +1619,7 @@ function formatPublicBuildRecord(row) {
   const sha256 = sanitizeSha256(row?.sha256);
   const fileSize = String(row?.file_size || "").trim();
   const romVersion = String(row?.rom_version || "").trim() || "Unknown ROM";
+  const region = deriveBuildRegion(row?.region, romVersion);
   const status = resolvePublicBuildStatus({
     downloadUrl,
     filename,
@@ -1636,7 +1637,7 @@ function formatPublicBuildRecord(row) {
     androidVersion: normalizeAndroidTag(row?.android),
     hyperOsVersion: deriveHyperOsVersion(romVersion),
     romVersion,
-    region: String(row?.region || "").trim(),
+    region,
     filename: filename || undefined,
     downloadUrl: downloadUrl || undefined,
     changelogUrl: status === "Available" ? sanitizeUrl(row?.changelog_url) || undefined : undefined,
@@ -1656,7 +1657,7 @@ function resolvePublicBuildStatus({ downloadUrl, filename, sha256, fileSize }) {
   }
 
   if (downloadUrl) {
-    return "Processing Metadata";
+    return "ROM Link Available";
   }
 
   if (filename) {
@@ -1667,8 +1668,33 @@ function resolvePublicBuildStatus({ downloadUrl, filename, sha256, fileSize }) {
 }
 
 function deriveHyperOsVersion(romVersion) {
-  const match = String(romVersion || "").trim().match(/^(OS\d+(?:\.\d+)*)/i);
-  return match?.[1] ? match[1].toUpperCase() : "";
+  const text = String(romVersion || "").trim();
+  const osMatch = text.match(/^(OS[1-3])(?:[.\s]|$)/i);
+  if (osMatch?.[1]) {
+    return osMatch[1].toUpperCase();
+  }
+  if (/^V14/i.test(text)) {
+    return "MIUI 14";
+  }
+  return "";
+}
+
+function deriveBuildRegion(region, romVersion) {
+  const direct = String(region || "").trim();
+  if (direct && direct.toLowerCase() !== "unknown") {
+    return direct;
+  }
+
+  const normalizedRom = String(romVersion || "").trim().toUpperCase();
+  if (normalizedRom.endsWith("CNXM")) return "ChinaStable";
+  if (normalizedRom.endsWith("EUXM")) return "EEAStable";
+  if (normalizedRom.endsWith("MIXM")) return "GlobalStable";
+  if (normalizedRom.endsWith("INXM")) return "IndiaStable";
+  if (normalizedRom.endsWith("RUXM")) return "RussiaStable";
+  if (normalizedRom.endsWith("TRXM")) return "TurkeyStable";
+  if (normalizedRom.endsWith("TWXM")) return "TaiwanStable";
+  if (normalizedRom.endsWith("IDXM")) return "IndonesiaStable";
+  return "Unknown";
 }
 
 function sanitizeSha256(value) {

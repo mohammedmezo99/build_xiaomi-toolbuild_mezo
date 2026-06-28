@@ -1,10 +1,11 @@
 import html
+import hashlib
 import json
 import os
 import re
 import sys
 import zlib
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import requests
@@ -84,6 +85,27 @@ def normalize_region(region_value: str) -> str:
     return REGION_MAP.get(key, region_value or "Unknown")
 
 
+def derive_region_from_rom_version(rom_version: str) -> str:
+    normalized = (rom_version or "").strip().upper()
+    if normalized.endswith("CNXM"):
+        return "ChinaStable"
+    if normalized.endswith("EUXM"):
+        return "EEAStable"
+    if normalized.endswith("MIXM"):
+        return "GlobalStable"
+    if normalized.endswith("INXM"):
+        return "IndiaStable"
+    if normalized.endswith("RUXM"):
+        return "RussiaStable"
+    if normalized.endswith("TRXM"):
+        return "TurkeyStable"
+    if normalized.endswith("TWXM"):
+        return "TaiwanStable"
+    if normalized.endswith("IDXM"):
+        return "IndonesiaStable"
+    return "Unknown"
+
+
 def clean_codename(raw_codename: str) -> str:
     value = (raw_codename or "").strip().lower()
     if "|" in value:
@@ -144,6 +166,39 @@ def build_output_filename(version: str, codename: str, rom_version: str, region:
     return f"DeadZoneLite_v{safe_version}_{codename}_{safe_rom_version}_{safe_region}-{safe_android}.zip"
 
 
+def build_output_path(filename: str) -> Path:
+    for candidate in (ROOT / "out" / filename, ROOT / filename):
+        if candidate.exists():
+            return candidate
+    return ROOT / filename
+
+
+def compute_sha256(file_path: Path) -> str:
+    if not file_path.exists() or not file_path.is_file():
+        return ""
+
+    digest = hashlib.sha256()
+    with file_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def format_file_size(num_bytes: int) -> str:
+    if num_bytes <= 0:
+        return ""
+
+    units = ["B", "KB", "MB", "GB", "TB"]
+    value = float(num_bytes)
+    for unit in units:
+        if value < 1024.0 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.2f} {unit}"
+        value /= 1024.0
+    return ""
+
+
 def derive_platform(rom_version: str) -> str:
     match = re.match(r"^(OS\d+\.\d+)", (rom_version or "").strip())
     return match.group(1) if match else "Unknown"
@@ -152,6 +207,16 @@ def derive_platform(rom_version: str) -> str:
 def derive_hyperos_major(rom_version: str) -> str:
     match = re.match(r"^OS(\d+)", (rom_version or "").strip())
     return f"HyperOS {match.group(1)}" if match else "HyperOS"
+
+
+def derive_hyperos_version(rom_version: str) -> str:
+    normalized = (rom_version or "").strip()
+    os_match = re.match(r"^(OS[1-3])(?:[.\s]|$)", normalized, re.IGNORECASE)
+    if os_match:
+        return os_match.group(1).upper()
+    if re.match(r"^V14", normalized, re.IGNORECASE):
+        return "MIUI 14"
+    return ""
 
 
 def derive_os_tag(rom_version: str) -> str:
@@ -185,6 +250,20 @@ def load_device_database(relative_path: str) -> dict:
         return {}
 
 
+def is_generic_device_fallback(codename: str, fallback: str) -> bool:
+    normalized = (fallback or "").strip()
+    if not normalized:
+        return True
+    if normalized.lower() == "unknown xiaomi device":
+        return True
+
+    match = re.fullmatch(r"Xiaomi\s+([A-Za-z0-9_-]+)", normalized, re.IGNORECASE)
+    if not match:
+        return False
+
+    return clean_codename(match.group(1)).lower() == clean_codename(codename).lower()
+
+
 def canonical_device_name(codename: str, fallback: str) -> str:
     key = clean_codename(codename).lower()
     fallback = (fallback or "").strip()
@@ -204,7 +283,10 @@ def canonical_device_name(codename: str, fallback: str) -> str:
                 if value and value.lower() not in {"null", "none", "unknown", "unknown xiaomi device"}:
                     return value
 
-    return fallback or f"Xiaomi {key.upper()}"
+    print(f"[device-name] Missing canonical mapping for codename: {key}", file=sys.stderr)
+    if fallback and not is_generic_device_fallback(key, fallback):
+        return fallback
+    return f"Unknown Xiaomi Device ({key})"
 
 def get_metadata() -> dict:
     version = read_text("Version", "0.00")
@@ -219,22 +301,47 @@ def get_metadata() -> dict:
     filename = read_text("bin/ddevice/output_zip.txt")
     if not filename:
         filename = build_output_filename(version, codename, rom_version, region, android)
+    output_path = build_output_path(filename)
+    sha256 = read_text("bin/ddevice/output_sha256.txt")
+    if not sha256:
+        sha256 = compute_sha256(output_path)
+    file_size = read_text("bin/ddevice/output_size.txt")
+    if not file_size and output_path.exists():
+        try:
+            file_size = format_file_size(output_path.stat().st_size)
+        except Exception:
+            file_size = ""
+    if not region or region == "Unknown":
+        region = derive_region_from_rom_version(rom_version)
+
     return {
         "version": version,
+        "deadZoneVersion": version,
         "codename": codename,
         "codename_lower": codename.lower(),
+        "style": "Lite",
         "rom_version": rom_version,
+        "romVersion": rom_version,
         "region": region,
         "android": android,
+        "androidVersion": android,
         "android_number": re.sub(r"[^0-9]", "", android),
         "platform": platform,
         "hyperos_major": derive_hyperos_major(rom_version),
+        "hyperOsVersion": derive_hyperos_version(rom_version),
         "os_tag": derive_os_tag(rom_version),
         "hyperos_tag": derive_hyperos_tag(rom_version),
         "android_hash_tag": derive_android_hash_tag(android),
         "device_name": device_name or "Unknown Xiaomi Device",
+        "deviceName": device_name or "Unknown Xiaomi Device",
         "filename": filename,
+        "sha256": sha256,
+        "file_size": file_size,
+        "fileSize": file_size,
         "drive_link": read_text("bin/ddevice/drive_link.txt"),
+        "downloadUrl": read_text("bin/ddevice/drive_link.txt"),
+        "changelog_url": (os.environ.get("CHANGELOG_LINK") or "").strip(),
+        "updatedAt": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "date": datetime.now().strftime("%d/%m/%Y"),
         "region_base_text": REGION_BASE_TEXT.get(region, "Based on pure official ROM"),
     }
@@ -272,6 +379,8 @@ def format_private_message(status: str, stage: str = "") -> str:
         f"Region: {metadata['region']}",
         f"Android: {metadata['android']}",
         f"Filename: {metadata['filename']}",
+        f"SHA256: {metadata['sha256'] or 'Pending'}",
+        f"File size: {metadata['file_size'] or 'Pending'}",
     ]
 
     if status == "request_received":
@@ -360,8 +469,12 @@ def sync_worker_build_status(status: str) -> None:
         "rom_version": metadata["rom_version"],
         "region": metadata["region"],
         "android": metadata["android"],
+        "deadzone_version": metadata["version"],
         "final_zip": metadata["filename"],
+        "sha256": metadata["sha256"],
+        "file_size": metadata["file_size"],
         "drive_link": metadata["drive_link"],
+        "changelog_url": metadata["changelog_url"],
     }
 
     if status == "success" and not payload["drive_link"].strip():
@@ -527,6 +640,7 @@ def usage() -> str:
         "  python notify.py private publish_prompt\n"
         "  python notify.py release success\n"
         "  python notify.py filename\n"
+        "  python notify.py metadata-json\n"
         "  python notify.py build [...legacy-args]"
     )
 
@@ -558,6 +672,10 @@ def main() -> int:
         metadata = get_metadata()
         print(metadata["filename"])
         write_github_env("FINAL_ROM_FILENAME", metadata["filename"])
+        return 0
+
+    if mode == "metadata-json":
+        print(json.dumps(get_metadata(), indent=2, sort_keys=True))
         return 0
 
     if mode == "build":

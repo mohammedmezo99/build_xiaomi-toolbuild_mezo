@@ -129,6 +129,26 @@ mv ${os_type}_${device_code}_${base_rom_code}.zip ../
 popd || exit
 mv out/${os_type}_${device_code}_${base_rom_code}.zip "$output_file"
 echo "$final_zip" > "$work_dir/bin/ddevice/output_zip.txt"
+sha256_value="$(sha256sum "$output_file" | awk '{print $1}')"
+echo "$sha256_value" > "$work_dir/bin/ddevice/output_sha256.txt"
+python3 - "$output_file" > "$work_dir/bin/ddevice/output_size.txt" <<'PY'
+import os
+import sys
+
+file_path = sys.argv[1]
+size = os.path.getsize(file_path)
+units = ["B", "KB", "MB", "GB", "TB"]
+value = float(size)
+
+for unit in units:
+    if value < 1024.0 or unit == units[-1]:
+        if unit == "B":
+            print(f"{int(value)} {unit}")
+        else:
+            print(f"{value:.2f} {unit}")
+        break
+    value /= 1024.0
+PY
 repack "Build completed"    
 repack "Output: "
 repack "$(pwd)/$output_file"

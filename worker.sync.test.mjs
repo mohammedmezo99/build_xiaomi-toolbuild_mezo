@@ -674,7 +674,7 @@ async function main() {
       status: "Available",
       deadZoneVersion: "v1.06",
       androidVersion: "A16",
-      hyperOsVersion: "OS3.0.123.0",
+      hyperOsVersion: "OS3",
       romVersion: "OS3.0.123.0",
       region: "Global",
       filename: "DeadZoneLite_v1.06_ZIRCON_OS3.0.123.0_Global-A16.zip",

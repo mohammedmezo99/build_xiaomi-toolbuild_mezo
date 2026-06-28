@@ -8,6 +8,7 @@ on:
     paths:
       - worker.js
       - worker.sync.test.mjs
+      - migrations/**
       - package.json
       - package-lock.json
       - wrangler.toml
@@ -46,6 +47,12 @@ jobs:
       - name: Run worker tests
         if: ${{ hashFiles('worker.sync.test.mjs') != '' }}
         run: node --test worker.sync.test.mjs
+
+      - name: Apply D1 migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler d1 migrations apply medo_lite_bot --remote
 
       - name: Deploy worker
         env:

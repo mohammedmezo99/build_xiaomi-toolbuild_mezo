@@ -451,7 +451,7 @@ async function formatPublishedRomsForCodename(env, codename) {
       "This device has no published DeadZone Lite builds yet.",
       "",
       "You can request a new build with:",
-      "/mezo <ROM_LINK>",
+      "<code>/mezo &lt;ROM_LINK&gt;</code>",
     ].join("\n");
   }
 
@@ -473,7 +473,7 @@ async function formatPublishedRomsForCodename(env, codename) {
 
   lines.push("━━━━━━━━━━━━━━━");
   lines.push("To request a new build:");
-  lines.push("/mezo <ROM_LINK>");
+  lines.push("<code>/mezo &lt;ROM_LINK&gt;</code>");
 
   return lines.join("\n").trim();
 }
@@ -1696,12 +1696,24 @@ async function callTelegramApi(env, method, payload, errorCode) {
     body: JSON.stringify(payload),
   });
 
+  const responseText = await response.text().catch(() => "");
+
   if (!response.ok) {
+    console.warn(`[telegram] API failed ${method} status=${response.status} body=${responseText}`);
     throw new Error(errorCode);
   }
 
-  const data = await response.json().catch(() => null);
+  const data = responseText
+    ? (() => {
+        try {
+          return JSON.parse(responseText);
+        } catch {
+          return null;
+        }
+      })()
+    : null;
   if (!data?.ok) {
+    console.warn(`[telegram] API returned ok=false ${method} description=${data?.description || "unknown"}`);
     throw new Error(errorCode);
   }
 

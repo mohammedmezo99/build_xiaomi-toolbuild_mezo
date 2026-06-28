@@ -13,6 +13,7 @@ globalThis.__workerTestables = {
   formatPublishedRomsForCodename,
   formatLatestBuild,
   formatRecentBuilds,
+  callTelegramApi,
   sanitizeBuildMetadata,
   handleCallbackQuery,
   publishLatestManualBuild,
@@ -276,6 +277,7 @@ async function main() {
     formatPublishedRomsForCodename,
     formatLatestBuild,
     formatRecentBuilds,
+    callTelegramApi,
     sanitizeBuildMetadata,
     handleCallbackQuery,
     publishLatestManualBuild,
@@ -409,6 +411,14 @@ async function main() {
     assert.match(text, /Redmi Note &lt;Pro&gt;/);
     assert.match(text, /OS2\.2\.1 &amp; Beta/);
     assert.match(text, /Global &gt; EEA/);
+  }
+
+  {
+    const env = makeEnv();
+    const text = await formatPublishedRomsForCodename(env, "unknowncodename");
+    assert.match(text, /No DeadZone builds found for UNKNOWNCODENAME/);
+    assert.match(text, /<code>\/mezo &lt;ROM_LINK&gt;<\/code>/);
+    assert.doesNotMatch(text, /\/mezo <ROM_LINK>/);
   }
 
   {
@@ -582,6 +592,51 @@ async function main() {
     assert.equal(calls.length, 1);
     assert.match(calls[0].url, /answerCallbackQuery$/);
     assert.equal(calls[0].options.text, "Unauthorized");
+  }
+
+  {
+    const env = makeEnv();
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    __setFetchImpl(async () => new Response("bad html payload", { status: 400 }));
+
+    try {
+      await callTelegramApi(env, "sendMessage", { text: "test" }, "telegram_send_failed");
+      assert.fail("expected callTelegramApi to throw on non-OK HTTP response");
+    } catch (error) {
+      assert.equal(error.message, "telegram_send_failed");
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /\[telegram\] API failed sendMessage status=400 body=bad html payload/);
+  }
+
+  {
+    const env = makeEnv();
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    __setFetchImpl(async () =>
+      new Response(JSON.stringify({ ok: false, description: "Bad Request: can't parse entities" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    try {
+      await callTelegramApi(env, "sendMessage", { text: "test" }, "telegram_send_failed");
+      assert.fail("expected callTelegramApi to throw when Telegram returns ok=false");
+    } catch (error) {
+      assert.equal(error.message, "telegram_send_failed");
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /\[telegram\] API returned ok=false sendMessage description=Bad Request: can't parse entities/);
   }
 
   console.log("worker.sync.test: ok");

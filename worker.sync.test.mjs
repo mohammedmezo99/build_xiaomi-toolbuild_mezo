@@ -386,6 +386,34 @@ async function main() {
   {
     const env = makeEnv();
     await updateBuildFromWorkflow(env, {
+      romLink: "https://example.com/rom-query.zip",
+      userId: "301",
+      userName: "builder",
+      status: "success",
+      updatedAt: "2026-06-26T13:30:00.000Z",
+      metadata: sanitizeBuildMetadata({
+        device_codename: "zircon",
+        device_name: "Redmi Note <Pro>",
+        rom_version: "OS2.2.1 & Beta",
+        region: "Global > EEA",
+        android: "A15",
+        final_zip: "deadzone-zircon-query.zip",
+        drive_link: "https://drive.google.com/open?id=test123",
+      }),
+    });
+
+    const text = await formatPublishedRomsForCodename(env, "zircon");
+    assert.match(text, /https:\/\/drive\.google\.com\/open\?id=test123/);
+    assert.match(text, /<a href="https:\/\/drive\.google\.com\/open\?id=test123">Click Here<\/a>/);
+    assert.doesNotMatch(text, /href="https:\/\/drive\.google\.com\/open"/);
+    assert.match(text, /Redmi Note &lt;Pro&gt;/);
+    assert.match(text, /OS2\.2\.1 &amp; Beta/);
+    assert.match(text, /Global &gt; EEA/);
+  }
+
+  {
+    const env = makeEnv();
+    await updateBuildFromWorkflow(env, {
       romLink: "https://example.com/rom-4.zip",
       userId: "400",
       userName: "builder",

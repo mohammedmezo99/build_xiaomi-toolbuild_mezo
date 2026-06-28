@@ -369,7 +369,7 @@ async function handleMezoCommand(env, message, args) {
     return okResponse();
   }
 
-  await sendTelegramMessage(env, chatId, await formatPublishedRomsForCodename(env, codename), message.message_id);
+  await sendTelegramMessage(env, chatId, await formatPublishedRomsForCodename(env, codename), message.message_id, "HTML");
   return okResponse();
 }
 
@@ -442,10 +442,11 @@ async function formatPublishedRomsForCodename(env, codename) {
 
   const results = await env.medo_lite_bot.prepare(query).bind(codename).all();
   const rows = results?.results || [];
+  const escapedCodename = escapeHtml(codename.toUpperCase());
 
   if (rows.length === 0) {
     return [
-      `❌ No DeadZone builds found for ${codename.toUpperCase()}.`,
+      `❌ No DeadZone builds found for ${escapedCodename}.`,
       "",
       "This device has no published DeadZone Lite builds yet.",
       "",
@@ -454,14 +455,19 @@ async function formatPublishedRomsForCodename(env, codename) {
     ].join("\n");
   }
 
-  const lines = [`📦 DeadZone Builds for ${codename.toUpperCase()}`, ""];
+  const lines = [`📦 <b>DeadZone Builds for ${escapedCodename}</b>`, ""];
 
   rows.forEach((row, index) => {
-    lines.push(`${toKeycapNumber(index + 1)} ${row.device_name || "Unknown Xiaomi Device"}`);
-    lines.push(`🧩 ROM: ${row.rom_version || "Unknown"}`);
-    lines.push(`🌍 Region: ${row.region || "Unknown"}`);
-    lines.push(`🤖 Android: ${normalizeAndroidTag(row.android)}`);
-    lines.push(`⬇️ Download: ${compactLink(row.drive_link)}`);
+    const driveLink = sanitizeUrl(row.drive_link);
+    lines.push(`${toKeycapNumber(index + 1)} ${escapeHtml(row.device_name || "Unknown Xiaomi Device")}`);
+    lines.push(`🧩 <b>ROM:</b> ${escapeHtml(row.rom_version || "Unknown")}`);
+    lines.push(`🌍 <b>Region:</b> ${escapeHtml(row.region || "Unknown")}`);
+    lines.push(`🤖 <b>Android:</b> ${escapeHtml(normalizeAndroidTag(row.android))}`);
+    if (driveLink) {
+      lines.push(`⬇️ <b>Download:</b> <a href="${escapeHtml(driveLink)}">Click Here</a>`);
+    } else {
+      lines.push("⬇️ <b>Download:</b> Not available");
+    }
     lines.push("");
   });
 

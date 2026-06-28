@@ -79,7 +79,17 @@ fi
 
 if [[ ${baserom_type} == 'payload' ]]; then
     unpack "Unpacking payload.bin"
-    payload-dumper-go -o build/baserom/images/ build/baserom/payload.bin >/dev/null 2>&1 || error "Unpacking payload.bin failed"    
+    if command -v payload-dumper-go >/dev/null 2>&1; then
+    payload-dumper-go -o build/baserom/images/ build/baserom/payload.bin >/dev/null 2>&1 || {
+        error "payload-dumper-go failed, trying payload-extract..."
+        payload-extract extract -o build/baserom/images/ build/baserom/payload.bin >/dev/null 2>&1 || error "Unpacking payload.bin failed"
+    }
+elif command -v payload-extract >/dev/null 2>&1; then
+    payload-extract extract -o build/baserom/images/ build/baserom/payload.bin >/dev/null 2>&1 || error "Unpacking payload.bin failed"
+else
+    error "No payload extractor found"
+    exit 1
+fi    
 elif [[ ${baserom_type} == 'br' ]];then
     super_list=$(cat build/baserom/dynamic_partitions_op_list | grep "add " | awk '{ print $2 }')
     unpack "Unpacking new.dat.br"

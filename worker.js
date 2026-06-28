@@ -52,6 +52,7 @@ const PUBLISH_YES_ACTION = "dz_publish_yes";
 const PUBLISH_NO_ACTION = "dz_publish_no";
 const CHANGELOG_LINK = "https://t.me/DeadZoneCloud/676";
 const DEVELOPER_LINK = "https://t.me/MohamedMezo1";
+const WEBSITE_LINK = "https://deadzone.web.id/";
 const REGION_ALIASES = new Map([
   ["china", "China"],
   ["cn", "China"],
@@ -1382,6 +1383,7 @@ function formatReleaseCaptionFromBuild(row) {
     "",
     `📋 <a href="${escapeHtml(CHANGELOG_LINK)}">Changelogs</a>`,
     `👨‍💻 <a href="${escapeHtml(DEVELOPER_LINK)}">Developer MEZO</a>`,
+    `🌐 <a href="${escapeHtml(WEBSITE_LINK)}">Official Website</a>`,
     "",
     "━━━━━━━━━━━━━━━",
     "",

@@ -10,6 +10,7 @@ function loadWorkerTestables() {
 globalThis.__workerTestables = {
   createBuildRecord,
   updateBuildFromWorkflow,
+  handlePublicBuildsApi,
   formatPublishedRomsForCodename,
   formatLatestBuild,
   formatRecentBuilds,
@@ -28,6 +29,7 @@ globalThis.__workerTestables = {
   const context = {
     console,
     URL,
+    Headers,
     Response,
     fetch: async (...args) => {
       if (typeof context.__fetchImpl !== "function") {
@@ -80,7 +82,7 @@ class FakeD1 {
 
   async run(query, params) {
     if (query.includes("INSERT INTO builds") && query.includes("'queued'")) {
-      const [buildId, userId, userName, romLink, deviceCodename, deviceName, romVersion, region, android, createdAt, updatedAt] = params;
+      const [buildId, userId, userName, romLink, deviceCodename, deviceName, romVersion, region, android, deadzoneVersion, sha256, fileSize, changelogUrl, createdAt, updatedAt] = params;
       this.rows.push({
         id: this.nextId++,
         build_id: buildId,
@@ -93,8 +95,12 @@ class FakeD1 {
         rom_version: romVersion,
         region,
         android,
+        deadzone_version: deadzoneVersion,
         final_zip: null,
         drive_link: null,
+        sha256,
+        file_size: fileSize,
+        changelog_url: changelogUrl,
         created_at: createdAt,
         updated_at: updatedAt,
       });
@@ -115,6 +121,10 @@ class FakeD1 {
         android,
         finalZip,
         driveLink,
+        deadzoneVersion,
+        sha256,
+        fileSize,
+        changelogUrl,
         createdAt,
         updatedAt,
       ] = params;
@@ -132,6 +142,10 @@ class FakeD1 {
         android,
         final_zip: finalZip,
         drive_link: driveLink,
+        deadzone_version: deadzoneVersion,
+        sha256,
+        file_size: fileSize,
+        changelog_url: changelogUrl,
         created_at: createdAt,
         updated_at: updatedAt,
       });
@@ -139,7 +153,7 @@ class FakeD1 {
     }
 
     if (query.includes("UPDATE builds") && query.includes("drive_link = COALESCE")) {
-      const [userId, userName, status, deviceCodename, deviceName, romVersion, region, android, finalZip, driveLink, updatedAt, id] = params;
+      const [userId, userName, status, deviceCodename, deviceName, romVersion, region, android, finalZip, driveLink, deadzoneVersion, sha256, fileSize, changelogUrl, updatedAt, id] = params;
       const row = this.rows.find((entry) => entry.id === id);
       assert.ok(row, `missing row ${id}`);
       row.user_id = userId || row.user_id;
@@ -152,6 +166,10 @@ class FakeD1 {
       row.android = android || row.android;
       row.final_zip = finalZip || row.final_zip;
       row.drive_link = driveLink || row.drive_link;
+      row.deadzone_version = deadzoneVersion || row.deadzone_version;
+      row.sha256 = sha256 || row.sha256;
+      row.file_size = fileSize || row.file_size;
+      row.changelog_url = changelogUrl || row.changelog_url;
       row.updated_at = updatedAt;
       return { success: true };
     }
@@ -195,6 +213,31 @@ class FakeD1 {
   }
 
   async all(query, params) {
+    if (query.includes("SELECT id, device_name, device_codename, rom_version, region, android, final_zip, drive_link, deadzone_version, sha256, file_size, changelog_url, updated_at")) {
+      const codenameFilter = query.includes("LOWER(COALESCE(device_codename, '')) = ?") ? params[0] : null;
+      const rows = this.rows
+        .filter((row) => row.status === "success" && (String(row.drive_link || "").trim() || String(row.final_zip || "").trim()))
+        .filter((row) => !codenameFilter || (row.device_codename || "").toLowerCase() === codenameFilter)
+        .sort((a, b) => this.compareByUpdatedDesc(a, b))
+        .slice(0, 20)
+        .map((row) => ({
+          id: row.id,
+          device_name: row.device_name,
+          device_codename: row.device_codename,
+          rom_version: row.rom_version,
+          region: row.region,
+          android: row.android,
+          final_zip: row.final_zip,
+          drive_link: row.drive_link,
+          deadzone_version: row.deadzone_version,
+          sha256: row.sha256,
+          file_size: row.file_size,
+          changelog_url: row.changelog_url,
+          updated_at: row.updated_at,
+        }));
+      return { results: rows };
+    }
+
     if (query.includes("SELECT id, device_codename, device_name, rom_version, region, android, final_zip, drive_link, updated_at")) {
       const rows = this.rows
         .filter((row) => row.status === "success" && String(row.drive_link || "").trim() && String(row.final_zip || "").trim())
@@ -275,6 +318,7 @@ async function main() {
   const {
     createBuildRecord,
     updateBuildFromWorkflow,
+    handlePublicBuildsApi,
     formatPublishedRomsForCodename,
     formatLatestBuild,
     formatRecentBuilds,
@@ -319,6 +363,10 @@ async function main() {
         android: "A15",
         final_zip: "deadzone-zircon.zip",
         drive_link: "https://drive.google.com/file/d/abc/view",
+        deadzone_version: "v1.06",
+        sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        file_size: "1.24 GB",
+        changelog_url: "https://example.com/changelog/zircon",
       }),
     });
 
@@ -327,6 +375,8 @@ async function main() {
     assert.equal(env.medo_lite_bot.rows[0].status, "success");
     assert.equal(env.medo_lite_bot.rows[0].drive_link, "https://drive.google.com/file/d/abc/view");
     assert.equal(env.medo_lite_bot.rows[0].final_zip, "deadzone-zircon.zip");
+    assert.equal(env.medo_lite_bot.rows[0].deadzone_version, "v1.06");
+    assert.equal(env.medo_lite_bot.rows[0].sha256, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   }
 
   {
@@ -345,6 +395,9 @@ async function main() {
         android: "A16",
         final_zip: "deadzone-garnet.zip",
         drive_link: "https://drive.google.com/file/d/xyz/view",
+        deadzone_version: "v1.06",
+        sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        file_size: "2.01 GB",
       }),
     });
 
@@ -371,6 +424,9 @@ async function main() {
         android: "A15",
         final_zip: "deadzone-peridot.zip",
         drive_link: "https://drive.google.com/file/d/peridot/view",
+        deadzone_version: "v1.06",
+        sha256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        file_size: "1.88 GB",
       }),
     });
 
@@ -403,6 +459,9 @@ async function main() {
         android: "A15",
         final_zip: "deadzone-zircon-query.zip",
         drive_link: "https://drive.google.com/open?id=test123",
+        deadzone_version: "v1.06",
+        sha256: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        file_size: "1.77 GB",
       }),
     });
 
@@ -439,6 +498,9 @@ async function main() {
         android: "A16",
         final_zip: "deadzone-moon.zip",
         drive_link: "https://drive.google.com/file/d/moon/view",
+        deadzone_version: "v1.06",
+        sha256: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        file_size: "1.95 GB",
       }),
     });
 
@@ -456,6 +518,9 @@ async function main() {
         android: "",
         final_zip: "",
         drive_link: "",
+        deadzone_version: "",
+        sha256: "",
+        file_size: "",
       }),
     });
 
@@ -489,6 +554,9 @@ async function main() {
         android: "A16",
         final_zip: "DeadZoneLite_v1.23_TOPAZ_OS3.0.1_Global-A16.zip",
         drive_link: "https://drive.google.com/file/d/topaz/view",
+        deadzone_version: "v1.23",
+        sha256: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        file_size: "2.14 GB",
       }),
     });
 
@@ -531,6 +599,9 @@ async function main() {
         android: "A15",
         final_zip: "DeadZoneLite_v2.00_AGATE_OS2.9.0_India-A15.zip",
         drive_link: "https://drive.google.com/file/d/agate/view",
+        deadzone_version: "v2.00",
+        sha256: "1111111111111111111111111111111111111111111111111111111111111111",
+        file_size: "1.54 GB",
       }),
     });
 
@@ -547,6 +618,81 @@ async function main() {
     assert.match(calls[1].url, /editMessageText$/);
     assert.match(calls[2].url, /answerCallbackQuery$/);
     assert.match(calls[1].options.text, /Published to release channel/);
+  }
+
+  {
+    const env = makeEnv();
+    await updateBuildFromWorkflow(env, {
+      romLink: "https://example.com/rom-api.zip",
+      userId: "500",
+      userName: "builder",
+      status: "success",
+      updatedAt: "2026-06-26T18:00:00.000Z",
+      metadata: sanitizeBuildMetadata({
+        device_codename: "zircon",
+        device_name: "Redmi Note 13 Pro+ 5G",
+        rom_version: "OS3.0.123.0",
+        region: "Global",
+        android: "A16",
+        final_zip: "DeadZoneLite_v1.06_ZIRCON_OS3.0.123.0_Global-A16.zip",
+        drive_link: "https://drive.google.com/file/d/api/view",
+        deadzone_version: "v1.06",
+        sha256: "2222222222222222222222222222222222222222222222222222222222222222",
+        file_size: "2.20 GB",
+        changelog_url: "https://example.com/changelog/api",
+      }),
+    });
+
+    await updateBuildFromWorkflow(env, {
+      romLink: "https://example.com/rom-api-incomplete.zip",
+      userId: "501",
+      userName: "builder",
+      status: "success",
+      updatedAt: "2026-06-26T18:10:00.000Z",
+      metadata: sanitizeBuildMetadata({
+        device_codename: "dada",
+        device_name: "Xiaomi 15",
+        rom_version: "OS3.0.456.0",
+        region: "China",
+        android: "A16",
+        final_zip: "DeadZoneLite_v1.06_DADA_OS3.0.456.0_China-A16.zip",
+        drive_link: "https://drive.google.com/file/d/incomplete/view",
+        deadzone_version: "v1.06",
+      }),
+    });
+
+    const response = await handlePublicBuildsApi(new Request("https://worker.example/api/builds?codename=zircon"), env);
+    const payload = await response.json();
+
+    assert.equal(payload.ok, true);
+    assert.equal(payload.builds.length, 1);
+    assert.deepEqual(payload.builds[0], {
+      id: "1",
+      deviceName: "Redmi Note 13 Pro+ 5G",
+      codename: "zircon",
+      style: "Lite",
+      status: "Available",
+      deadZoneVersion: "v1.06",
+      androidVersion: "A16",
+      hyperOsVersion: "OS3.0.123.0",
+      romVersion: "OS3.0.123.0",
+      region: "Global",
+      filename: "DeadZoneLite_v1.06_ZIRCON_OS3.0.123.0_Global-A16.zip",
+      downloadUrl: "https://drive.google.com/file/d/api/view",
+      changelogUrl: "https://example.com/changelog/api",
+      sha256: "2222222222222222222222222222222222222222222222222222222222222222",
+      fileSize: "2.20 GB",
+      updatedAt: "2026-06-26T18:00:00.000Z",
+    });
+
+    const allResponse = await handlePublicBuildsApi(new Request("https://worker.example/api/builds"), env);
+    const allPayload = await allResponse.json();
+    const incomplete = allPayload.builds.find((build) => build.codename === "dada");
+    assert.equal(incomplete?.status, "Metadata Incomplete");
+    assert.equal(incomplete?.filename, "DeadZoneLite_v1.06_DADA_OS3.0.456.0_China-A16.zip");
+    assert.equal(incomplete?.downloadUrl, "https://drive.google.com/file/d/incomplete/view");
+    assert.equal(incomplete?.sha256, undefined);
+    assert.equal(incomplete?.fileSize, undefined);
   }
 
   {

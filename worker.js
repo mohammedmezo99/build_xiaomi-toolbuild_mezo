@@ -104,11 +104,13 @@ async function handlePublicBuildsApi(request, env) {
   const codename = resolvePublicBuildsCodename(url);
   const limit = codename ? PUBLIC_API_CODENAME_BUILD_LIMIT : PUBLIC_API_BUILD_LIMIT;
   const query = `
-    SELECT id, device_name, device_codename, rom_version, region, android, final_zip, drive_link, updated_at
+    SELECT id, device_name, device_codename, rom_version, region, android, final_zip, drive_link, deadzone_version, sha256, file_size, changelog_url, updated_at
     FROM builds
     WHERE status = 'success'
-      AND drive_link IS NOT NULL
-      AND TRIM(drive_link) != ''
+      AND (
+        (drive_link IS NOT NULL AND TRIM(drive_link) != '')
+        OR (final_zip IS NOT NULL AND TRIM(final_zip) != '')
+      )
       ${codename ? "AND LOWER(COALESCE(device_codename, '')) = ?" : ""}
     ORDER BY datetime(updated_at) DESC, id DESC
     LIMIT ?
@@ -120,18 +122,7 @@ async function handlePublicBuildsApi(request, env) {
       ? await statement.bind(codename, limit).all()
       : await statement.bind(limit).all();
     const rows = Array.isArray(results?.results) ? results.results : [];
-    const builds = rows.map((row) => ({
-      id: row.id,
-      device_name: row.device_name || "Unknown Xiaomi Device",
-      device_codename: String(row.device_codename || "").trim().toLowerCase(),
-      rom_version: row.rom_version || "Unknown ROM",
-      region: row.region || "",
-      android: normalizeAndroidTag(row.android),
-      final_zip: row.final_zip || "",
-      drive_link: row.drive_link || "",
-      updated_at: row.updated_at || "",
-      style: "DeadZone Lite",
-    }));
+    const builds = rows.map((row) => formatPublicBuildRecord(row)).filter(Boolean);
 
     return withPublicBuildsCors(Response.json({ ok: true, builds }));
   } catch {
@@ -862,8 +853,8 @@ async function createBuildRecord(env, build) {
   const metadata = build.metadata || {};
   const query = `
     INSERT INTO builds (
-      build_id, user_id, user_name, rom_link, status, device_codename, device_name, rom_version, region, android, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)
+      build_id, user_id, user_name, rom_link, status, device_codename, device_name, rom_version, region, android, deadzone_version, sha256, file_size, changelog_url, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   await env.medo_lite_bot
     .prepare(query)
@@ -877,6 +868,10 @@ async function createBuildRecord(env, build) {
       metadata.romVersion || null,
       metadata.region || null,
       metadata.android || null,
+      metadata.deadZoneVersion || null,
+      metadata.sha256 || null,
+      metadata.fileSize || null,
+      metadata.changelogUrl || null,
       build.createdAt,
       build.createdAt,
     )
@@ -946,6 +941,10 @@ async function updateBuildFromWorkflow(env, build) {
         android = COALESCE(NULLIF(?, ''), android),
         final_zip = COALESCE(NULLIF(?, ''), final_zip),
         drive_link = COALESCE(NULLIF(?, ''), drive_link),
+        deadzone_version = COALESCE(NULLIF(?, ''), deadzone_version),
+        sha256 = COALESCE(NULLIF(?, ''), sha256),
+        file_size = COALESCE(NULLIF(?, ''), file_size),
+        changelog_url = COALESCE(NULLIF(?, ''), changelog_url),
         updated_at = ?
     WHERE id = ?
   `;
@@ -963,6 +962,10 @@ async function updateBuildFromWorkflow(env, build) {
       metadata.android,
       metadata.finalZip,
       shouldPersistDriveLink ? metadata.driveLink : "",
+      metadata.deadZoneVersion,
+      metadata.sha256,
+      metadata.fileSize,
+      metadata.changelogUrl,
       build.updatedAt,
       row.id,
     )
@@ -982,8 +985,8 @@ async function insertBuildRecordFromSync(env, build) {
   const driveLink = build.status === "success" ? metadata.driveLink : "";
   const query = `
     INSERT INTO builds (
-      build_id, user_id, user_name, rom_link, status, device_codename, device_name, rom_version, region, android, final_zip, drive_link, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      build_id, user_id, user_name, rom_link, status, device_codename, device_name, rom_version, region, android, final_zip, drive_link, deadzone_version, sha256, file_size, changelog_url, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   await env.medo_lite_bot
@@ -1001,6 +1004,10 @@ async function insertBuildRecordFromSync(env, build) {
       metadata.android || null,
       metadata.finalZip || null,
       driveLink || null,
+      metadata.deadZoneVersion || null,
+      metadata.sha256 || null,
+      metadata.fileSize || null,
+      metadata.changelogUrl || null,
       build.updatedAt,
       build.updatedAt,
     )
@@ -1599,7 +1606,74 @@ function sanitizeBuildMetadata(payload) {
     android: normalizeAndroidTag(payload?.android),
     finalZip: String(payload?.final_zip || "").trim().slice(0, 255),
     driveLink: sanitizeUrl(payload?.drive_link),
+    deadZoneVersion: String(payload?.deadzone_version || "").trim().slice(0, 40),
+    sha256: sanitizeSha256(payload?.sha256),
+    fileSize: String(payload?.file_size || "").trim().slice(0, 60),
+    changelogUrl: sanitizeUrl(payload?.changelog_url),
   };
+}
+
+function formatPublicBuildRecord(row) {
+  const downloadUrl = sanitizeUrl(row?.drive_link);
+  const filename = String(row?.final_zip || "").trim();
+  const sha256 = sanitizeSha256(row?.sha256);
+  const fileSize = String(row?.file_size || "").trim();
+  const romVersion = String(row?.rom_version || "").trim() || "Unknown ROM";
+  const status = resolvePublicBuildStatus({
+    downloadUrl,
+    filename,
+    sha256,
+    fileSize,
+  });
+
+  return {
+    id: String(row?.id || ""),
+    deviceName: row?.device_name || "Unknown Xiaomi Device",
+    codename: String(row?.device_codename || "").trim().toLowerCase(),
+    style: "Lite",
+    status,
+    deadZoneVersion: String(row?.deadzone_version || "").trim() || formatDeadZoneVersion(filename),
+    androidVersion: normalizeAndroidTag(row?.android),
+    hyperOsVersion: deriveHyperOsVersion(romVersion),
+    romVersion,
+    region: String(row?.region || "").trim(),
+    filename: filename || undefined,
+    downloadUrl: downloadUrl || undefined,
+    changelogUrl: status === "Available" ? sanitizeUrl(row?.changelog_url) || undefined : undefined,
+    sha256: sha256 || undefined,
+    fileSize: fileSize || undefined,
+    updatedAt: row?.updated_at || "",
+  };
+}
+
+function resolvePublicBuildStatus({ downloadUrl, filename, sha256, fileSize }) {
+  if (downloadUrl && filename && sha256 && fileSize) {
+    return "Available";
+  }
+
+  if (downloadUrl && filename) {
+    return "Metadata Incomplete";
+  }
+
+  if (downloadUrl) {
+    return "Processing Metadata";
+  }
+
+  if (filename) {
+    return "Upload Pending";
+  }
+
+  return "Coming Soon";
+}
+
+function deriveHyperOsVersion(romVersion) {
+  const match = String(romVersion || "").trim().match(/^(OS\d+(?:\.\d+)*)/i);
+  return match?.[1] ? match[1].toUpperCase() : "";
+}
+
+function sanitizeSha256(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : "";
 }
 
 function sanitizeUrl(value) {

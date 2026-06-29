@@ -2,7 +2,7 @@ work_dir=$(pwd)
 source $work_dir/functions.sh
 RCLONE_CONFIG_1DRIVE="$work_dir/rclone.conf"
 RCLONE_REMOTE_NAME="${RCLONE_REMOTE_NAME:-gdrive}"
-RCLONE_UPLOAD_DIR="${RCLONE_UPLOAD_DIR:-DeadZoneBuilds/medo_lite}"
+RCLONE_UPLOAD_DIR="${RCLONE_UPLOAD_DIR:-DeadZoneBuilds/GamingPlus}"
 os_type=$(cat $work_dir/bin/ddevice/os_type.txt)
 base_rom_code=$(cat $work_dir/bin/ddevice/base_rom_code.txt)
 androidVER=$(cat $work_dir/bin/ddevice/androidver.txt)
@@ -53,6 +53,7 @@ if [[ $version == v* ]]; then
 fi
 
 codename=$(printf '%s' "$device_f" | tr '[:lower:]' '[:upper:]')
+UPLOAD_DEVICE_DIR="${RCLONE_UPLOAD_DIR}/${codename}"
 
 case "$regionTYPE" in
     China)
@@ -168,12 +169,12 @@ else
 fi
 
 # 1drive
-rclone -v --config="$RCLONE_CONFIG_1DRIVE" copy "$output_file" "$RCLONE_REMOTE_NAME:$RCLONE_UPLOAD_DIR/" || {
+rclone -v --config="$RCLONE_CONFIG_1DRIVE" copy "$output_file" "$RCLONE_REMOTE_NAME:$UPLOAD_DEVICE_DIR/" || {
     upload "Error uploading file to remote: $output_file"
     exit 1
 }
 
-remote_file="$RCLONE_REMOTE_NAME:$RCLONE_UPLOAD_DIR/$final_zip"
+remote_file="$RCLONE_REMOTE_NAME:$UPLOAD_DEVICE_DIR/$final_zip"
 drive_link="$(rclone --config="$RCLONE_CONFIG_1DRIVE" link "$remote_file" 2>/dev/null || true)"
 
 if [ -z "$drive_link" ] || [[ "$drive_link" != *"drive.google.com"* && "$drive_link" != *"googleusercontent.com"* ]]; then

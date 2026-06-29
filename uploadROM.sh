@@ -106,12 +106,19 @@ zstd --rm $work_dir/build/baserom/images/super.img -o $work_dir/build/baserom/im
 repack "Generating flashing script"
 if [[ ${baserom_type} == 'payload' ]]; then
     mkdir -p $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/
-	mv -f $work_dir/build/baserom/images/super.img.zst $work_dir/out/${os_type}_${device_code}_${base_rom_code}/
-    mv -f $work_dir/build/baserom/images/*.img $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/
+    mv -f $work_dir/build/baserom/images/super.img.zst $work_dir/out/${os_type}_${device_code}_${base_rom_code}/
+    mv -f $work_dir/build/baserom/images/*.img $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/ 2>/dev/null || true
 elif [[ ${baserom_type} == 'br' ]]; then
     mkdir -p $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/
-    mv -f $work_dir/build/baserom/firmware-update/* $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/
+    mv -f $work_dir/build/baserom/firmware-update/* $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/ 2>/dev/null || true
     mv -f $work_dir/build/baserom/images/super.img.zst $work_dir/out/${os_type}_${device_code}_${base_rom_code}/
+elif [[ ${baserom_type} == 'super' ]]; then
+    mkdir -p $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/
+    mv -f $work_dir/build/baserom/images/super.img.zst $work_dir/out/${os_type}_${device_code}_${base_rom_code}/
+    mv -f $work_dir/build/baserom/images/*.img $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/ 2>/dev/null || true
+else
+    repack "Unknown baserom_type: ${baserom_type}"
+    exit 1
 fi
 
 # generate dynamic script

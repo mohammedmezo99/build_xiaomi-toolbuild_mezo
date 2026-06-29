@@ -105,37 +105,47 @@ repack "Compressing super.img"
 zstd --rm $work_dir/build/baserom/images/super.img -o $work_dir/build/baserom/images/super.img.zst > /dev/null 2>&1
 
 repack "Generating flashing script"
+
+OUT_DIR="$work_dir/out/${os_type}_${device_code}_${base_rom_code}"
+OUT_IMAGES_DIR="$OUT_DIR/images"
+
+mkdir -p "$OUT_IMAGES_DIR"
+
 if [[ ${baserom_type} == 'payload' ]]; then
-    mkdir -p $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/
-    mv -f $work_dir/build/baserom/images/super.img.zst $work_dir/out/${os_type}_${device_code}_${base_rom_code}/
-    mv -f $work_dir/build/baserom/images/*.img $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/ 2>/dev/null || true
+    mv -f "$work_dir/build/baserom/images/super.img.zst" "$OUT_DIR/"
+    mv -f "$work_dir/build/baserom/images/"*.img "$OUT_IMAGES_DIR/" 2>/dev/null || true
 elif [[ ${baserom_type} == 'br' ]]; then
-    mkdir -p $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/
-    mv -f $work_dir/build/baserom/firmware-update/* $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/ 2>/dev/null || true
-    mv -f $work_dir/build/baserom/images/super.img.zst $work_dir/out/${os_type}_${device_code}_${base_rom_code}/
+    mv -f "$work_dir/build/baserom/firmware-update/"* "$OUT_IMAGES_DIR/" 2>/dev/null || true
+    mv -f "$work_dir/build/baserom/images/super.img.zst" "$OUT_DIR/"
 elif [[ ${baserom_type} == 'super' ]]; then
-    mkdir -p $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/
-    mv -f $work_dir/build/baserom/images/super.img.zst $work_dir/out/${os_type}_${device_code}_${base_rom_code}/
-    mv -f $work_dir/build/baserom/images/*.img $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/ 2>/dev/null || true
+    mv -f "$work_dir/build/baserom/images/super.img.zst" "$OUT_DIR/"
+    mv -f "$work_dir/build/baserom/images/"*.img "$OUT_IMAGES_DIR/" 2>/dev/null || true
 else
     repack "Unknown baserom_type: ${baserom_type}"
     exit 1
 fi
 
 # generate dynamic script
-cp -rf $work_dir/bin/script2flash/META-INF $work_dir/out/${os_type}_${device_code}_${base_rom_code}/
-cp -rf $work_dir/bin/script2flash/*.bat $work_dir/out/${os_type}_${device_code}_${base_rom_code}/
-cp -rf $work_dir/bin/script2flash/cust.img $work_dir/out/${os_type}_${device_code}_${base_rom_code}/images/
-echo $device_f > $work_dir/out/${os_type}_${device_code}_${base_rom_code}/META-INF/Data/DeviceCode
+cp -rf "$work_dir/bin/script2flash/META-INF" "$OUT_DIR/"
+cp -rf "$work_dir/bin/script2flash/"*.bat "$OUT_DIR/" 2>/dev/null || true
+
+if [ -f "$work_dir/bin/script2flash/cust.img" ]; then
+    cp -f "$work_dir/bin/script2flash/cust.img" "$OUT_IMAGES_DIR/"
+fi
+
+mkdir -p "$OUT_DIR/META-INF/Data"
+echo "$device_f" > "$OUT_DIR/META-INF/Data/DeviceCode"
+
 repack "Done"
 
+find "$OUT_DIR" -exec touch {} +
 
-find out/${os_type}_${device_code}_${base_rom_code} |xargs touch
-pushd out/${os_type}_${device_code}_${base_rom_code}/ || exit
-zip -r ${os_type}_${device_code}_${base_rom_code}.zip ./*
-mv ${os_type}_${device_code}_${base_rom_code}.zip ../
-popd || exit
-mv out/${os_type}_${device_code}_${base_rom_code}.zip "$output_file"
+pushd "$OUT_DIR" >/dev/null || exit 1
+zip -r "${os_type}_${device_code}_${base_rom_code}.zip" ./*
+mv "${os_type}_${device_code}_${base_rom_code}.zip" "$work_dir/out/"
+popd >/dev/null || exit 1
+
+mv "$work_dir/out/${os_type}_${device_code}_${base_rom_code}.zip" "$work_dir/$output_file"
 echo "$final_zip" > "$work_dir/bin/ddevice/output_zip.txt"
 sha256_value="$(sha256sum "$output_file" | awk '{print $1}')"
 echo "$sha256_value" > "$work_dir/bin/ddevice/output_sha256.txt"
